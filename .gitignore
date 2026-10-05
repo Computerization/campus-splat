@@ -1,0 +1,36 @@
+# Local secrets — NEVER commit these. The admin password lives in .env.
+.env
+.env.*
+!.env.example
+
+# Runtime data (photos, SQLite database, training output) — never commit
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Frontend
+node_modules/
+# Note: only the repo-root dist/ is ignored here.
+# frontend/dist is **intentionally committed** — that way the deployment machine
+# only needs uv, not Node.js. After changing frontend code, run
+# `npm.cmd run build` and commit the result.
+/dist/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local Reasonix directory
+.reasonix/
+
+# Docs are excluded from the repo by default.
+# Delete the next line if you want docs/ published on GitHub.
+docs/

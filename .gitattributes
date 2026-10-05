@@ -1,0 +1,24 @@
+# Normalize line endings so the same repo works on Windows (development)
+# and Linux/macOS (deployment).
+#
+# Key points:
+#   * shell scripts MUST be LF on Linux/macOS, otherwise you get
+#     "\r: command not found"
+#   * .cmd / .bat are safer as CRLF on Windows
+
+* text=auto
+
+*.sh    text eol=lf
+*.py    text eol=lf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+
+# Photos and binary artifacts must not be treated as text
+*.jpg   binary
+*.jpeg  binary
+*.png   binary
+*.heic  binary
+*.webp  binary
+*.db    binary
+*.sqlite binary
+*.ply   binary

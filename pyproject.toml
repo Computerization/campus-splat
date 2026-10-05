@@ -1,0 +1,54 @@
+[project]
+name = "campus-splat"
+version = "0.1.0"
+description = "School 3D reconstruction capture platform: drone/volunteer photo collection, heuristic quality checks, 3DGS training scheduling"
+readme = "README.md"
+requires-python = ">=3.11"
+
+# Backend runtime dependencies.
+# Note: frontend/ is a Node project — its dependencies live in frontend/package.json.
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "sqlalchemy>=2.0",
+    "pydantic>=2.5",
+    "python-multipart>=0.0.9",
+    "pillow>=10.2",
+    # HEIC/HEIF support — required for iPhone originals
+    "pillow-heif>=0.15",
+    "numpy>=1.26",
+    # Live resource monitoring on the admin "System" page (CPU / memory / disk)
+    "psutil>=5.9",
+    # Reads the .env file at the repo root, so changing the password needs no system env vars
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",
+    "pytest>=8.0",
+]
+
+[tool.uv]
+# This is not a Python package to be installed with pip — it's just an
+# environment for running the scripts under backend/.
+# Disabling packaging stops uv sync from trying to build/install the project itself.
+package = false
+
+# Optional: opencv only makes the blur metric faster. There is a pure-numpy
+# fallback, so you can skip it on a slow connection and add it later with:
+#     uv add opencv-python-headless
+
+# PyPI mirror.
+#
+# WARNING: Tsinghua's mirror (pypi.tuna.tsinghua.edu.cn) returns HTTP 403 for
+#          wheel files on some networks (the index page and HEAD requests look
+#          fine, but the actual download is refused), which makes `uv sync` fail.
+#          If switching back to it gives you 403s, use any of these instead:
+#            Aliyun   https://mirrors.aliyun.com/pypi/simple/
+#            Tencent  https://mirrors.cloud.tencent.com/pypi/simple/
+#            Huawei   https://repo.huaweicloud.com/repository/pypi/simple/
+#            USTC     https://pypi.mirrors.ustc.edu.cn/simple/
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
