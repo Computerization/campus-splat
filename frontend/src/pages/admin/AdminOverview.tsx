@@ -186,6 +186,14 @@ export default function AdminOverview() {
                       <span className="small">
                         {t('common.totalCount', { count: item.photo_total })}
                         <br />
+                        {item.photo_checking > 0 && (
+                          <>
+                            <span className="muted">
+                              {t('status.checking')} {item.photo_checking}
+                            </span>
+                            <br />
+                          </>
+                        )}
                         <span style={{ color: 'var(--bad)' }}>
                           {t('admin.overview.rejected')} {item.photo_rejected}
                         </span>

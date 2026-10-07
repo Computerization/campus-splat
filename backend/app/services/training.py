@@ -27,15 +27,18 @@ import subprocess
 import sys
 import threading
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session as OrmSession
 
+from PIL import Image
+
 from .. import config
 from ..database import SessionLocal
 from ..models import Checkpoint, Photo, Task, TrainingBlock, TrainingRun, utcnow
-from . import splat, toolchain
+from . import naming, splat, toolchain
 from .stats import USABLE_STATUSES
 
 PROGRESS_PREFIX = "[THREEDGS]"
@@ -174,12 +177,24 @@ def preflight(
     with_gps = sum(
         1 for photo, _ in rows if photo.gps_lat is not None and photo.gps_lng is not None
     )
+    # Uploads are judged in the background, so a run started right after a
+    # volunteer's batch would silently leave those photos out of the block plan.
+    checking = db.execute(
+        select(func.count(Photo.id)).where(
+            Photo.task_id == task_id, Photo.status == "checking"
+        )
+    ).scalar_one()
     largest = max((len(block.photos) for block in blocks), default=0)
     budget = config.TRAINING_GAUSSIANS_PER_GB * config.TRAINING_VRAM_GB
 
     warnings: list[str] = []
     if not rows:
         warnings.append("这个任务还没有可用的照片，先让志愿者多拍一些")
+    if checking:
+        warnings.append(
+            f"还有 {checking} 张照片在后台质检，这次重建用不到它们 —— "
+            "等十几秒再发起，或者先到「照片审阅」看结果"
+        )
     if task.kind == "outdoor" and with_gps == 0:
         warnings.append("室外任务没有带 GPS 的照片，RTK 对齐会被跳过，各栋楼之间不会自动对齐")
     if task.kind == "indoor" and with_gps == 0:
@@ -349,6 +364,52 @@ def retry_block(db: OrmSession, block: TrainingBlock, *, created_by: str | None)
     )
 
 
+# ---------------------------------------------------------------- input prep
+#
+# Photos are grouped into one folder per device (and image size) so COLMAP can
+# give each group its own intrinsics (--ImageReader.single_camera_per_folder),
+# and anything COLMAP cannot read — HEIC above all — is transcoded to JPEG before
+# the pipeline starts.
+
+JPEG_QUALITY = 95
+
+
+def camera_group(photo: Photo) -> str:
+    """Input folder for one camera: device model plus image size.
+
+    Same device *and* same resolution share one camera model — that is exactly
+    the condition under which COLMAP may share intrinsics at all.
+    """
+    model = naming.normalize(photo.camera_model, fallback="UnknownCamera", max_length=24)
+    if photo.width and photo.height:
+        return f"{model}_{photo.width}x{photo.height}"
+    return model
+
+
+def input_photo_name(photo: Photo, index: int) -> str:
+    """Relative name inside the run's input directory (always ``.jpg``)."""
+    return f"{camera_group(photo)}/{index:06d}.jpg"
+
+
+def transcode_to_jpeg(src: Path, dest: Path, *, quality: int = JPEG_QUALITY) -> None:
+    """Re-encode a photo COLMAP cannot read (HEIC, PNG, TIFF, …) as JPEG.
+
+    The EXIF blob is copied verbatim — the outdoor RTK alignment reads the GPS
+    tags out of it — and the pixels are stored as they are, so the orientation tag
+    keeps matching the image.
+    """
+    with Image.open(src) as raw:
+        exif = raw.info.get("exif")
+        image = raw.convert("RGB")
+        if exif:
+            try:
+                image.save(dest, format="JPEG", quality=quality, optimize=True, exif=exif)
+                return
+            except Exception:  # noqa: BLE001 - a broken EXIF blob must not lose the photo
+                pass
+        image.save(dest, format="JPEG", quality=quality, optimize=True)
+
+
 # ---------------------------------------------------------------- manager
 
 
@@ -458,6 +519,30 @@ class TrainingManager:
 
     # ------------------------------------------------------------ launch
 
+    @staticmethod
+    def _work_dir(db: OrmSession, run: TrainingRun) -> Path:
+        """``data/training/<task folder>/<timestamp>`` for this run.
+
+        One folder per *run*, under the task it belongs to, so a glance at the
+        directory tells you which building it is — and two runs of the same task
+        never overwrite each other (the second one within the same minute gets
+        ``-2``). The name is only decided here, once: the path is stored on the
+        run and everything later (delete, retry, preview) reads it back.
+        """
+        folder = "Global"
+        if run.task_id:
+            task = db.get(Task, run.task_id)
+            if task is not None:
+                folder = task.folder or naming.normalize(task.name, fallback=f"Task{task.id}")
+        # Local time on purpose: the folder should read like the clock on the wall
+        stamp = datetime.now().strftime("%Y%m%d-%H%M")
+        candidate = config.TRAINING_DIR / folder / stamp
+        suffix = 2
+        while candidate.exists():
+            candidate = config.TRAINING_DIR / folder / f"{stamp}-{suffix}"
+            suffix += 1
+        return candidate
+
     def _launch(self, run_id: int) -> None:
         config.ensure_dirs()
         with SessionLocal() as db:
@@ -465,7 +550,7 @@ class TrainingManager:
             if run is None or run.status != "queued":
                 return
 
-            work_dir = config.TRAINING_DIR / f"run{run.id}"
+            work_dir = self._work_dir(db, run)
             input_dir = work_dir / "input"
             output_dir = work_dir / "output"
             log_path = config.LOG_DIR / f"training_run{run.id}.log"
@@ -473,7 +558,8 @@ class TrainingManager:
             output_dir.mkdir(parents=True, exist_ok=True)
 
             blocks = list(run.blocks)
-            # One flat directory of hard links; the plan maps block -> file names
+            # The plan maps block -> file name; the files themselves are hard
+            # links (or transcoded copies) inside the input directory
             photo_query = select(Photo)
             if run.task_id:
                 photo_query = photo_query.where(Photo.task_id == run.task_id)
@@ -492,7 +578,7 @@ class TrainingManager:
                         continue  # the photo was deleted after the run was queued
                     name = file_names.get(photo_id)
                     if name is None:
-                        name = f"{len(file_names):06d}{Path(photo.stored_path).suffix.lower()}"
+                        name = input_photo_name(photo, len(file_names))
                         file_names[photo_id] = name
                         plan_photos.append(
                             {
@@ -536,8 +622,18 @@ class TrainingManager:
                 "reuse_dir": None,
             }
             if run.reuse_run_id:
-                reuse_work = config.TRAINING_DIR / f"run{run.reuse_run_id}" / "output"
-                plan["reuse_dir"] = str(reuse_work) if reuse_work.exists() else None
+                # Read the earlier run's directory from the database instead of
+                # guessing it from the id: the folder name is whatever it was
+                # created as.
+                reuse = db.get(TrainingRun, run.reuse_run_id)
+                reuse_dir = (
+                    config.DATA_DIR / reuse.output_path
+                    if reuse is not None and reuse.output_path
+                    else None
+                )
+                plan["reuse_dir"] = (
+                    str(reuse_dir) if reuse_dir is not None and reuse_dir.exists() else None
+                )
 
             plan_path = work_dir / "plan.json"
             plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -559,29 +655,36 @@ class TrainingManager:
             db.commit()
 
             rel_paths = [
-                (photo.stored_path, file_names[photo.id])
-                for photo in photo_by_id.values()
+                (photo, file_names[photo.id])
+                for photo in sorted(photo_by_id.values(), key=lambda item: item.id)
                 if photo.id in file_names
             ]
 
-        # Hard-link the inputs when possible (instant on the same volume), else copy
-        linked = 0
-        for rel, name in rel_paths:
-            src = config.DATA_DIR / rel
+        # One directory per device (and image size) under the input directory:
+        # COLMAP gets its own intrinsics per folder, and files it cannot read
+        # (HEIC, PNG, TIFF, …) are transcoded to JPEG here — the last moment
+        # before the trainer sees them.
+        prepared = 0
+        for photo, name in rel_paths:
+            src = config.DATA_DIR / photo.stored_path
             if not src.exists():
                 continue
             dest = input_dir / name
+            if dest.exists():
+                prepared += 1
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
             try:
-                if dest.exists():
-                    linked += 1
-                    continue
-                os.link(src, dest)
+                if src.suffix.lower() in (".jpg", ".jpeg"):
+                    try:
+                        os.link(src, dest)  # instant on the same volume
+                    except OSError:
+                        shutil.copy2(src, dest)
+                else:
+                    transcode_to_jpeg(src, dest)
             except OSError:
-                try:
-                    shutil.copy2(src, dest)
-                except OSError:
-                    continue
-            linked += 1
+                continue
+            prepared += 1
 
         command = self._build_command()
         env = os.environ.copy()
@@ -593,7 +696,7 @@ class TrainingManager:
                 "THREEDGS_INPUT_DIR": str(input_dir),
                 "THREEDGS_OUTPUT_DIR": str(output_dir),
                 "THREEDGS_LOG_FILE": str(log_path),
-                "THREEDGS_PHOTO_COUNT": str(linked),
+                "THREEDGS_PHOTO_COUNT": str(prepared),
                 "THREEDGS_PARAMS": json.dumps(run.params or {}, ensure_ascii=False),
                 "THREEDGS_PLAN_FILE": str(plan_path),
             }
@@ -639,7 +742,7 @@ class TrainingManager:
             run = db.get(TrainingRun, run_id)
             if run is not None:
                 run.stage = "starting"
-                run.message = f"训练进程已启动（{linked} 张照片）"
+                run.message = f"训练进程已启动（{prepared} 张照片）"
                 db.commit()
 
     def _build_command(self) -> list[str]:

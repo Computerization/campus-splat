@@ -106,8 +106,16 @@ export default function AdminSystem() {
         <Card>
           <h3>{t('admin.system.photoStorage')}</h3>
           <div className="kv">
-            <dt>{t('admin.system.photoStorage')}</dt>
+            <dt>{t('admin.system.photos')}</dt>
             <dd>{formatBytes(data.storage.photos_bytes)}</dd>
+            <dt>{t('admin.system.training')}</dt>
+            <dd>{formatBytes(data.storage.training_bytes)}</dd>
+            <dt>{t('admin.system.thumbnails')}</dt>
+            <dd>{formatBytes(data.storage.thumbnails_bytes)}</dd>
+            <dt>{t('admin.system.managed')}</dt>
+            <dd>
+              <strong>{formatBytes(data.storage.managed_bytes)}</strong>
+            </dd>
             <dt>{t('admin.overview.free')}</dt>
             <dd>
               {formatBytes(data.storage.free_bytes)} / {formatBytes(data.storage.total_bytes)}
@@ -134,7 +142,15 @@ export default function AdminSystem() {
               Object.entries(data.photo_status_counts).map(([status, count]) => (
                 <Badge
                   key={status}
-                  tone={status === 'ok' ? 'ok' : status === 'warning' ? 'warn' : 'bad'}
+                  tone={
+                    status === 'ok'
+                      ? 'ok'
+                      : status === 'warning'
+                        ? 'warn'
+                        : status === 'checking'
+                          ? 'neutral'
+                          : 'bad'
+                  }
                 >
                   {t(`status.${status}` as never)} {count}
                 </Badge>

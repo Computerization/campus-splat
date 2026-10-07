@@ -2,7 +2,9 @@
 
 export type Role = 'admin' | 'volunteer'
 export type IssueLevel = 'error' | 'warn' | 'info'
-export type PhotoStatus = 'ok' | 'warning' | 'rejected'
+export type PhotoStatus = 'ok' | 'warning' | 'rejected' | 'checking'
+/** What an admin may set by hand; `checking` is a state, not a verdict. */
+export type ReviewStatus = 'ok' | 'warning' | 'rejected'
 export type CheckpointStatus = 'pending' | 'in_progress' | 'done' | 'blocked'
 export type TrainingStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 
@@ -23,6 +25,8 @@ export interface Task {
   kind: 'indoor' | 'outdoor'
   description: string | null
   location_hint: string | null
+  /** ASCII folder under data/uploads/ that holds this task's photos */
+  folder: string | null
   access_code: string
   status: 'active' | 'archived'
   cover_image: string | null
@@ -40,6 +44,8 @@ export interface TaskProgress {
   photo_ok: number
   photo_warning: number
   photo_rejected: number
+  /** Uploaded but still in the background quality check (neither usable nor rejected) */
+  photo_checking: number
   contributors: string[]
   progress_percent: number
   last_upload_at: string | null
@@ -57,6 +63,8 @@ export interface Checkpoint {
   task_id: number
   order_index: number
   name: string
+  /** ASCII folder under data/uploads/<task folder>/ that holds these photos */
+  folder: string | null
   building: string | null
   floor: string | null
   room: string | null
@@ -80,6 +88,8 @@ export interface CheckpointProgress extends Checkpoint {
   uploaded_ok: number
   uploaded_warning: number
   uploaded_rejected: number
+  /** Uploaded but still in the background quality check */
+  uploaded_checking: number
   uploaded_total: number
   uploaded_usable: number
   remaining: number
@@ -155,6 +165,12 @@ export interface StorageInfo {
   total_bytes: number
   free_bytes: number
   photos_bytes: number
+  /** Training output (data/training) — hard links to photos are not double counted */
+  training_bytes: number
+  thumbnails_bytes: number
+  logs_bytes: number
+  /** Everything the platform manages (photos/training/thumbnails/logs) */
+  managed_bytes: number
 }
 
 export interface TrainingRun {

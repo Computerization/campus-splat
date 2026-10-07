@@ -20,7 +20,6 @@ interface FormState {
   name: string
   kind: 'indoor' | 'outdoor'
   description: string
-  location_hint: string
   access_code: string
 }
 
@@ -28,7 +27,6 @@ const EMPTY_FORM: FormState = {
   name: '',
   kind: 'indoor',
   description: '',
-  location_hint: '',
   access_code: '',
 }
 
@@ -59,7 +57,7 @@ export default function AdminTasks() {
         name: form.name.trim(),
         kind: form.kind,
         description: form.description.trim() || undefined,
-        location_hint: form.location_hint.trim() || undefined,
+        access_code: form.access_code.trim() || undefined,
       })
       setOpen(false)
       setForm(EMPTY_FORM)
@@ -127,8 +125,8 @@ export default function AdminTasks() {
                           {t('admin.tasks.archived')}
                         </span>
                       )}
-                      {item.task.location_hint && (
-                        <div className="small muted">{item.task.location_hint}</div>
+                      {item.task.folder && (
+                        <div className="small muted mono">uploads/{item.task.folder}</div>
                       )}
                       <div className="small muted">正在进行：{item.active_volunteers.join('、') || '暂无志愿者'}</div>
                     </td>
@@ -153,6 +151,12 @@ export default function AdminTasks() {
                     </td>
                     <td className="small">
                       {item.photo_total}
+                      {item.photo_checking > 0 && (
+                        <span className="muted">
+                          {' '}
+                          ({t('status.checking')} {item.photo_checking})
+                        </span>
+                      )}
                       {item.photo_rejected > 0 && (
                         <span style={{ color: 'var(--bad)' }}>
                           {' '}
@@ -225,6 +229,7 @@ export default function AdminTasks() {
             onChange={(event) => setForm({ ...form, name: event.target.value })}
             placeholder={t('admin.tasks.namePlaceholder')}
           />
+          <span className="hint">{t('admin.tasks.nameHint')}</span>
         </label>
         <label className="field">
           <span>{t('admin.tasks.kind')}</span>
@@ -237,15 +242,6 @@ export default function AdminTasks() {
             <option value="indoor">{t('admin.tasks.kind.indoor')}</option>
             <option value="outdoor">{t('admin.tasks.kind.outdoor')}</option>
           </select>
-        </label>
-        <label className="field">
-          <span>{t('admin.tasks.location')}</span>
-          <input
-            type="text"
-            value={form.location_hint}
-            onChange={(event) => setForm({ ...form, location_hint: event.target.value })}
-            placeholder={t('admin.tasks.locationPlaceholder')}
-          />
         </label>
         <label className="field">
           <span>{t('admin.tasks.description')}</span>

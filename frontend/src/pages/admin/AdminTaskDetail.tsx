@@ -23,8 +23,6 @@ import type { CheckpointProgress, Photo } from '../../types'
 interface CheckpointForm {
   id?: number
   name: string
-  building: string
-  floor: string
   room: string
   // Dimensions are kept as strings so the inputs can hold "" or "8.5"
   length_m: string
@@ -32,22 +30,16 @@ interface CheckpointForm {
   room_height_m: string
   shot_count: number
   indoor: boolean
-  instructions: string
-  find_hint: string
 }
 
 const EMPTY_CP: CheckpointForm = {
   name: '',
-  building: '',
-  floor: '',
   room: '',
   length_m: '',
   width_m: '',
   room_height_m: '',
   shot_count: 4,
   indoor: true,
-  instructions: '',
-  find_hint: '',
 }
 
 // ---------------------------------------------------------------- photo-count estimate
@@ -107,7 +99,6 @@ export default function AdminTaskDetail() {
   const [bulkMode, setBulkMode] = useState<'append' | 'replace'>('append')
   const [taskEditOpen, setTaskEditOpen] = useState(false)
   const [taskName, setTaskName] = useState('')
-  const [taskLocation, setTaskLocation] = useState('')
   const [taskDescription, setTaskDescription] = useState('')
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState<unknown>(null)
@@ -134,16 +125,12 @@ export default function AdminTaskDetail() {
     setFormError(null)
     const payload = {
       name: cpForm.name.trim(),
-      building: cpForm.building.trim() || undefined,
-      floor: cpForm.floor.trim() || undefined,
       room: cpForm.room.trim() || undefined,
       length_m: parsePositive(cpForm.length_m) ?? undefined,
       width_m: parsePositive(cpForm.width_m) ?? undefined,
       room_height_m: parsePositive(cpForm.room_height_m) ?? undefined,
       shot_count: cpForm.shot_count,
       indoor: cpForm.indoor,
-      instructions: cpForm.instructions.trim() || undefined,
-      find_hint: cpForm.find_hint.trim() || undefined,
     }
     try {
       if (cpForm.id) await api.patchCheckpoint(cpForm.id, payload)
@@ -196,7 +183,6 @@ export default function AdminTaskDetail() {
     try {
       await api.patchTask(taskId, {
         name: taskName.trim() || undefined,
-        location_hint: taskLocation.trim(),
         description: taskDescription.trim(),
       })
       setTaskEditOpen(false)
@@ -224,7 +210,6 @@ export default function AdminTaskDetail() {
           <h1>{task.task.name}</h1>
           <div className="sub">
             {task.task.kind === 'outdoor' ? t('task.kind.outdoor') : t('task.kind.indoor')}
-            {task.task.location_hint ? ` · ${task.task.location_hint}` : ''}
           </div>
         </div>
         <div className="row">
@@ -289,6 +274,14 @@ export default function AdminTaskDetail() {
                 usable: task.photo_ok + task.photo_warning,
                 rejected: task.photo_rejected,
               })}
+              {task.photo_checking > 0 && (
+                <>
+                  {' · '}
+                  <span className="muted">
+                    {t('status.checking')} {task.photo_checking}
+                  </span>
+                </>
+              )}
             </dd>
             <dt>{t('table.contributors')}</dt>
             <dd className="small">{task.contributors.join(separator) || '—'}</dd>
@@ -303,7 +296,6 @@ export default function AdminTaskDetail() {
             className="btn btn-ghost sm"
             onClick={() => {
               setTaskName(task.task.name)
-              setTaskLocation(task.task.location_hint ?? '')
               setTaskDescription(task.task.description ?? '')
               setTaskEditOpen(true)
             }}
@@ -378,16 +370,11 @@ export default function AdminTaskDetail() {
                     <td className="muted">{cp.order_index + 1}</td>
                     <td>
                       <strong>{cp.name}</strong>
-                      {cp.instructions && (
-                        <div className="small muted" style={{ maxWidth: 260 }}>
-                          {cp.instructions.slice(0, 60)}
-                          {cp.instructions.length > 60 && '…'}
-                        </div>
+                      {cp.folder && (
+                        <div className="small muted mono">uploads/{task.task.folder ?? '…'}/{cp.folder}</div>
                       )}
                     </td>
-                    <td className="small">
-                      {[cp.building, cp.floor, cp.room].filter(Boolean).join(' · ') || '—'}
-                    </td>
+                    <td className="small">{cp.room || '—'}</td>
                     <td>
                       <ProgressBar
                         value={Math.min(100, (cp.uploaded_usable / Math.max(1, cp.shot_count)) * 100)}
@@ -421,8 +408,6 @@ export default function AdminTaskDetail() {
                             setCpForm({
                               id: cp.id,
                               name: cp.name,
-                              building: cp.building ?? '',
-                              floor: cp.floor ?? '',
                               room: cp.room ?? '',
                               length_m: cp.length_m !== null ? String(cp.length_m) : '',
                               width_m: cp.width_m !== null ? String(cp.width_m) : '',
@@ -430,8 +415,6 @@ export default function AdminTaskDetail() {
                                 cp.room_height_m !== null ? String(cp.room_height_m) : '',
                               shot_count: cp.shot_count,
                               indoor: cp.indoor,
-                              instructions: cp.instructions ?? '',
-                              find_hint: cp.find_hint ?? '',
                             })
                             setFormError(null)
                           }}
@@ -518,27 +501,8 @@ export default function AdminTaskDetail() {
                 onChange={(event) => setCpForm({ ...cpForm, name: event.target.value })}
                 placeholder={t('admin.cp.namePlaceholder')}
               />
+              <span className="hint">{t('admin.cp.nameHint')}</span>
             </label>
-            <div className="grid cols-2">
-              <label className="field">
-                <span>{t('admin.cp.building')}</span>
-                <input
-                  type="text"
-                  value={cpForm.building}
-                  onChange={(event) => setCpForm({ ...cpForm, building: event.target.value })}
-                  placeholder={t('admin.cp.buildingPlaceholder')}
-                />
-              </label>
-              <label className="field">
-                <span>{t('admin.cp.floor')}</span>
-                <input
-                  type="text"
-                  value={cpForm.floor}
-                  onChange={(event) => setCpForm({ ...cpForm, floor: event.target.value })}
-                  placeholder={t('admin.cp.floorPlaceholder')}
-                />
-              </label>
-            </div>
             <label className="field">
               <span>{t('admin.cp.room')}</span>
               <input
@@ -587,7 +551,6 @@ export default function AdminTaskDetail() {
                   />
                 </label>
               </div>
-              <span className="hint">{t('admin.cp.roomSizeHint')}</span>
             </div>
 
             <label className="field">
@@ -621,22 +584,6 @@ export default function AdminTaskDetail() {
                 )}
               </div>
               <span className="hint">{t('admin.cp.shotCountHint')}</span>
-            </label>
-            <label className="field">
-              <span>{t('admin.cp.instructions')}</span>
-              <textarea
-                value={cpForm.instructions}
-                onChange={(event) => setCpForm({ ...cpForm, instructions: event.target.value })}
-                placeholder={t('admin.cp.instructionsPlaceholder')}
-              />
-            </label>
-            <label className="field">
-              <span>{t('admin.cp.findHint')}</span>
-              <textarea
-                value={cpForm.find_hint}
-                onChange={(event) => setCpForm({ ...cpForm, find_hint: event.target.value })}
-                placeholder={t('admin.cp.findHintPlaceholder')}
-              />
             </label>
             <label className="checkbox">
               <input
@@ -716,14 +663,7 @@ export default function AdminTaskDetail() {
         <label className="field">
           <span>{t('admin.tasks.name')}</span>
           <input type="text" value={taskName} onChange={(event) => setTaskName(event.target.value)} />
-        </label>
-        <label className="field">
-          <span>{t('admin.tasks.location')}</span>
-          <input
-            type="text"
-            value={taskLocation}
-            onChange={(event) => setTaskLocation(event.target.value)}
-          />
+          <span className="hint">{t('admin.tasks.nameHint')}</span>
         </label>
         <label className="field"><span>任务描述</span><textarea value={taskDescription} onChange={event => setTaskDescription(event.target.value)} /></label>
       </Modal>
@@ -760,11 +700,12 @@ function parseBulk(text: string) {
     .map((line) => {
       const [name, building, floor, room, shots] = line.split('|').map((part) => part.trim())
       const count = Number(shots)
+      // The old format had separate 楼栋/楼层/房间 columns; they are folded into
+      // the single "房间/走廊/…" field now, so pasted lists keep working.
+      const place = [building, floor, room].filter(Boolean).join(' ')
       return {
         name: name ?? '',
-        building: building || undefined,
-        floor: floor || undefined,
-        room: room || undefined,
+        room: place || undefined,
         shot_count: Number.isFinite(count) && count > 0 ? Math.min(64, Math.round(count)) : 4,
       }
     })

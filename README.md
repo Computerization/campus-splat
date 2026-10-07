@@ -115,6 +115,30 @@ Each administrator owns the tasks they create and can edit/delete only their own
 
 With an external photo folder the database stores absolute paths, so moving that disk later means updating the variable too.
 
+**The photo tree is meant to be readable.** Every folder and file name is ASCII, so you can find a photo without opening the app:
+
+```
+data/uploads/SanHaoLou/3FShiYanShi302/0001_ZhangSan.jpg
+             │         │               │    └ who shot it (pinyin of the name they joined with)
+             │         │               └ its position inside that checkpoint
+             │         └ the checkpoint — 点位名, transliterated ("3F 实验室 302")
+             └ the task — 任务名, transliterated ("三号楼")
+```
+
+Task and checkpoint names are normalized when they are created (CamelCase for English, pinyin for Chinese), so
+typing in Chinese is fine — the name only ever changes *on disk*. Renaming a task later does **not** move its
+photos: the folder is fixed at creation. Vendors, tools and scripts all get plain ASCII paths, which is what makes
+`find`, `rsync`, COLMAP and Windows happy.
+
+**Training output** lives in `data/training/<task folder>/<YYYYMMDD-HHMM>/` — one self-contained folder per run,
+grouped under the task it belongs to, so `ls data/training` says which building it is and a second run of the same
+task gets its own timestamped folder instead of overwriting the first. Inside: `plan.json`, the hard-linked
+`input/`, and `output/` with the poses, block clouds, `merged.ply`, `transforms.json` and `manifest.json`. The
+System page breaks the disk usage down by photos / training output / thumbnails, and each run in the Training page
+has a 🗑 button: delete the record, optionally together with the files. Deleting the record alone is the default
+because a run is hours of GPU time — and note that a run's `input/` is hard links, so a photo removed from
+`uploads/` keeps living (and taking space) inside the run that used it until that run's folder is deleted too.
+
 **Opening folders:** the admin console has 📂 buttons (System page: data / photo folders; task detail: that task's photos; photo review: show the selected photo). They open the file manager **on the machine running the server** — clicking from your laptop still opens it on the server, not on your laptop.
 
 **Deleting tasks:** use the task page. Global reset is disabled for all fixed
@@ -136,8 +160,10 @@ records remain in the database. Original media is removed when requested.
    IndexedDB on the current browser/device; they survive a reload but do not sync
    between devices. The task page shows progress and allows removing/replacing photos.
 5. After every checkpoint meets its required photo count, submit all photos together.
-   Quality checks run on submission. An invalid/corrupt/duplicate upload rolls the
-   batch back. Pending submissions are locked and cannot be abandoned.
+   The batch is validated on submission (byte-identical duplicates, unreadable files)
+   and rolls back as a whole when something is wrong. The heuristic quality checks —
+   blur, exposure, near-duplicates — then run in the background, so the admin sees the
+   verdicts when reviewing. Pending submissions are locked and cannot be abandoned.
 6. A returned submission goes back to in-progress, retaining the photos and review
    feedback. The volunteer can change photos, resubmit, or abandon.
 7. Accepted submissions appear under Successful submissions and release their slot.
@@ -181,6 +207,8 @@ Deliberately **heuristic**, not a full photogrammetry run — so a volunteer sta
 | Compression artifacts | Bytes per pixel — catches photos re-sent through WeChat/QQ |
 | Missing capture info | EXIF presence (time, GPS, camera) |
 | Near-duplicate frames | 64-bit dHash, Hamming distance (catches "shoot 20 of the same wall") |
+
+Consequently it runs in a **background worker** (`backend/app/services/quality_jobs.py`): the upload request only streams the file to disk and refuses byte-identical repeats, then returns; the phone watches each photo flip from *checking* to its verdict, and the photo page can start the next batch meanwhile. Set `THREEDGS_QUALITY_INLINE=1` to judge inside the request instead. A photo left in *checking* by a crash is re-queued at the next startup, a photo that cannot be decoded ends up rejected with the reason, and a **manual verdict from the review page always wins** over the heuristic one — including when the admin judges a photo the worker has not finished checking yet.
 
 Each photo gets a 0–100 score, structured issues, and actionable advice in the volunteer's own language. Admins can always override a verdict manually.
 

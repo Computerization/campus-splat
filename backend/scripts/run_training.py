@@ -306,7 +306,11 @@ class Pipeline:
                 colmap, "feature_extractor",
                 "--database_path", str(database),
                 "--image_path", str(self.input_dir),
-                "--ImageReader.single_camera", "1",
+                # The input directory holds one sub-folder per device (and image
+                # size), so every phone gets its own intrinsics instead of having
+                # them averaged together — different phones may not share a
+                # camera model at all (docs/training-pipeline.md §4.1).
+                "--ImageReader.single_camera_per_folder", "1",
                 "--SiftExtraction.max_image_size", str(self.params["image_resize"]),
                 "--SiftExtraction.use_gpu", self._gpu_flag(),
             ],

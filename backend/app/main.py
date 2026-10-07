@@ -19,6 +19,7 @@ from . import config
 from .database import init_db
 from .quality import HEIF_SUPPORTED
 from .routers import admin, auth, media, volunteer, workflow
+from .services.quality_jobs import queue as quality_queue
 from .services.training import manager as training_manager
 
 logger = logging.getLogger("threedgs")
@@ -31,11 +32,16 @@ async def lifespan(app: FastAPI):
     logger.info("数据目录：%s", config.DATA_DIR)
     if not HEIF_SUPPORTED:
         logger.warning("未安装 pillow-heif，iPhone 的 HEIC 原图将无法直接解析（建议 pip install pillow-heif）")
+    if config.quality_inline():
+        logger.info("质检在请求内同步执行（THREEDGS_QUALITY_INLINE=1）")
+    else:
+        quality_queue.start()  # background checks; uploads never wait for them
     training_manager.start()
     try:
         yield
     finally:
         training_manager.shutdown()
+        quality_queue.shutdown()
 
 
 app = FastAPI(

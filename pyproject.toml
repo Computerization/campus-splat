@@ -21,6 +21,7 @@ dependencies = [
     "psutil>=5.9",
     # Reads the .env file at the repo root, so changing the password needs no system env vars
     "python-dotenv>=1.0",
+    "pypinyin>=0.55.0",
 ]
 
 [dependency-groups]

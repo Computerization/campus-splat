@@ -16,6 +16,7 @@ import string
 import subprocess
 import sys
 from pathlib import Path
+from typing import Iterable
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -26,7 +27,17 @@ from sqlalchemy.orm import Session as OrmSession
 
 from .. import config, storage
 from ..database import get_db
-from ..models import AuthSession, Checkpoint, Photo, Task, TaskAssignment, TrainingBlock, TrainingRun, utcnow
+from ..models import (
+    AuthSession,
+    Checkpoint,
+    Photo,
+    QualityReport,
+    Task,
+    TaskAssignment,
+    TrainingBlock,
+    TrainingRun,
+    utcnow,
+)
 from ..quality import HEIF_SUPPORTED
 from ..quality.metrics import OPENCV_AVAILABLE
 from ..schemas import (
@@ -54,7 +65,7 @@ from ..schemas import (
     TrainingRunOut,
 )
 from ..security import prune_expired_sessions, require_admin, admin_scope
-from ..services import splat, stats, sysinfo, training
+from ..services import naming, splat, stats, sysinfo, training
 from ..services.training import manager, queue_depth
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(admin_scope)])
@@ -162,6 +173,7 @@ def create_task(payload: TaskCreateIn, db: OrmSession = Depends(get_db), session
         kind=payload.kind,
         description=payload.description,
         location_hint=payload.location_hint,
+        folder=_free_task_folder(db, payload.name),
         access_code=code,
     )
     db.add(task)
@@ -217,6 +229,8 @@ def patch_task(
 
     for key, value in data.items():
         setattr(task, key, value)
+    if not task.folder:
+        task.folder = _free_task_folder(db, task.name)
     db.commit()
     db.refresh(task)
     return TaskOut.model_validate(task)
@@ -278,6 +292,7 @@ def create_checkpoint(
         task_id=task_id,
         order_index=payload.order_index if payload.order_index is not None else _next_order(db, task_id),
         name=payload.name,
+        folder=_free_checkpoint_folder(db, task_id, payload.name),
         building=payload.building,
         floor=payload.floor,
         room=payload.room,
@@ -310,6 +325,28 @@ def _next_order(db: OrmSession, task_id: int) -> int:
     )
 
 
+def _free_task_folder(db: OrmSession, name: str) -> str:
+    """ASCII folder for a task's photos (data/uploads/<this>/…) — unique per task."""
+    taken = db.execute(select(Task.folder).where(Task.folder.is_not(None))).scalars().all()
+    return naming.unique_folder(naming.normalize(name, fallback="Task"), taken)
+
+
+def _free_checkpoint_folder(
+    db: OrmSession, task_id: int, name: str, *, extra_taken: Iterable[str] = ()
+) -> str:
+    """Folder for one checkpoint inside its task; ``extra_taken`` covers rows that
+    are queued in the same transaction but not flushed yet (bulk import)."""
+    taken = list(
+        db.execute(
+            select(Checkpoint.folder).where(
+                Checkpoint.task_id == task_id, Checkpoint.folder.is_not(None)
+            )
+        ).scalars()
+    )
+    taken.extend(extra_taken)
+    return naming.unique_folder(naming.normalize(name, fallback="Checkpoint"), taken)
+
+
 @router.post("/tasks/{task_id}/checkpoints/bulk")
 def bulk_create_checkpoints(
     task_id: int, payload: CheckpointBulkIn, db: OrmSession = Depends(get_db)
@@ -331,12 +368,19 @@ def bulk_create_checkpoints(
     else:
         base_order = _next_order(db, task_id)
 
+    used_folders: list[str] = []
+
     for index, item in enumerate(payload.items):
+        folder = _free_checkpoint_folder(
+            db, task_id, item.name, extra_taken=used_folders
+        )
+        used_folders.append(folder)
         db.add(
             Checkpoint(
                 task_id=task_id,
                 order_index=item.order_index if item.order_index is not None else base_order + index,
                 name=item.name,
+                folder=folder,
                 building=item.building,
                 floor=item.floor,
                 room=item.room,
@@ -373,6 +417,10 @@ def patch_checkpoint(
         ] or None
     for key, value in data.items():
         setattr(checkpoint, key, value)
+    # Rows created before the folder layout existed get one on the next edit; an
+    # existing folder is never changed, because the photos already live there.
+    if not checkpoint.folder:
+        checkpoint.folder = _free_checkpoint_folder(db, checkpoint.task_id, checkpoint.name)
     db.commit()
     db.refresh(checkpoint)
     return CheckpointOut.model_validate(checkpoint)
@@ -489,6 +537,11 @@ def list_photos(
     )
 
 
+# What a manual review is worth in the score column when the heuristic never ran
+# (the photo was still queued when the admin judged it).
+MANUAL_REVIEW_SCORES = {"ok": 100, "warning": 70, "rejected": 0}
+
+
 @router.patch("/photos/{photo_id}", response_model=PhotoOut)
 def review_photo(
     photo_id: int,
@@ -502,12 +555,28 @@ def review_photo(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "照片不存在")
 
     photo.status = payload.status
-    if photo.quality is not None:
-        photo.quality.passed = payload.status != "rejected"
-        if payload.note:
-            issues = list(photo.quality.issues or [])
-            issues.append({"code": "admin_note", "level": "info", "message": payload.note})
-            photo.quality.issues = issues
+    report = photo.quality
+    if report is None:
+        # The background check has not produced a report yet (the photo is still
+        # queued or being decoded) — the manual verdict has to be self-contained,
+        # otherwise the note would be dropped on the floor. The worker sees the
+        # changed status and leaves this row alone.
+        report = QualityReport(
+            photo_id=photo.id,
+            score=MANUAL_REVIEW_SCORES.get(payload.status, 100),
+            issues=[],
+            metrics=None,
+            advice=f"管理员人工判定：{payload.status}",
+        )
+        db.add(report)
+        photo.quality = report
+    report.passed = payload.status != "rejected"
+
+    issues = list(report.issues or [])
+    if payload.note:
+        issues.append({"code": "admin_note", "level": "info", "message": payload.note})
+    if issues != (report.issues or []):
+        report.issues = issues
     db.commit()
     db.refresh(photo)
     return _photo_out(photo, session)
@@ -753,6 +822,82 @@ def cancel_training(run_id: int, db: OrmSession = Depends(get_db)) -> TrainingRu
     db.commit()
     db.refresh(run)
     return _run_detail(run)
+
+
+def _run_work_dir(run: TrainingRun) -> Path:
+    """A run's own directory, read back from the path stored when it launched.
+
+    Going through the stored path also keeps runs created with the earlier
+    ``runN`` layout working — nothing assumes the folder name any more.
+    """
+    if run.output_path:
+        try:
+            return storage.resolve(run.output_path).parent
+        except HTTPException:
+            pass
+    return config.TRAINING_DIR / f"run{run.id}"
+
+
+def _run_log_path(run: TrainingRun) -> Path:
+    if run.log_path:
+        try:
+            return storage.resolve(run.log_path)
+        except HTTPException:
+            pass
+    return config.LOG_DIR / f"training_run{run.id}.log"
+
+
+@router.delete("/training/{run_id}")
+def delete_training_run(
+    run_id: int,
+    purge_files: bool = Query(default=False, description="连磁盘上的产物目录与日志一起删除"),
+    session: AuthSession = Depends(require_admin),
+    db: OrmSession = Depends(get_db),
+) -> dict:
+    """Drop one run's record.
+
+    The files stay on disk unless ``purge_files`` is set: a training run is hours
+    of GPU time and deleting its point clouds cannot be undone, so the cautious
+    default is "remove it from the console, leave the data alone". The reply says
+    where the files are either way.
+    """
+    run = db.get(TrainingRun, run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "训练任务不存在")
+    if run.status == "running":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "这次训练还在跑，先取消再删除")
+
+    work_dir = _run_work_dir(run)
+    log_path = _run_log_path(run)
+    kept_at = run.output_path
+
+    freed = 0
+    if purge_files:
+        freed += _purge_dir(work_dir)
+        try:
+            work_dir.rmdir()
+        except OSError:
+            pass
+        if log_path.exists():
+            freed += log_path.stat().st_size
+            log_path.unlink(missing_ok=True)
+        kept_at = None
+
+    # Blocks (and their logs) belong to this run; other runs only reference it
+    # through reuse_run_id, and a missing reuse directory just means they solve
+    # the poses again instead of copying them.
+    for block in list(run.blocks):
+        db.delete(block)
+    db.delete(run)
+    db.commit()
+
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "files_deleted": bool(purge_files),
+        "freed_bytes": freed,
+        "kept_at": kept_at,
+    }
 
 
 @router.get("/training/{run_id}/log")
@@ -1146,6 +1291,73 @@ def _purge_dir(path: Path) -> int:
         except OSError:
             continue
     return freed
+
+
+@router.post("/photos/purge")
+def purge_photos(
+    task_id: int | None = Query(default=None, description="只清这个任务，默认全部"),
+    session: AuthSession = Depends(require_admin),
+    db: OrmSession = Depends(get_db),
+) -> dict:
+    """Delete every photo (files, thumbnails and records) but keep tasks/checkpoints.
+
+    Meant for the one-off switch to the readable upload layout: photos taken
+    before it have random file names, and starting the collection over is simpler
+    than shuffling them around. Photos are what is deleted — the tasks,
+    checkpoints and their shot counts stay exactly as they are.
+    """
+    query = select(Photo)
+    if task_id is not None:
+        query = query.where(Photo.task_id == task_id)
+    photos = db.execute(query).scalars().all()
+
+    freed = 0
+    for photo in photos:
+        for rel in (photo.stored_path, photo.thumb_path, photo.preview_path):
+            if not rel:
+                continue
+            try:
+                path = storage.resolve(rel)
+            except HTTPException:
+                continue
+            freed += path.stat().st_size if path.exists() else 0
+            path.unlink(missing_ok=True)
+        db.delete(photo)
+    db.commit()
+
+    # Files left in the uploads tree without a database row (a crash, or an
+    # earlier cleanup) would keep the tree messy — the point of this endpoint is
+    # a photo directory that matches reality.
+    known = {
+        row
+        for (row,) in db.execute(select(Photo.stored_path))
+        if row
+    }
+    orphans = 0
+    for path in sorted(config.UPLOAD_DIR.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+        if path.is_dir():
+            try:
+                if not any(path.iterdir()):
+                    path.rmdir()
+            except OSError:
+                continue
+            continue
+        try:
+            rel = path.relative_to(config.DATA_DIR).as_posix()
+        except ValueError:
+            rel = str(path)
+        if rel in known:
+            continue
+        orphans += 1
+        freed += path.stat().st_size if path.exists() else 0
+        path.unlink(missing_ok=True)
+
+    return {
+        "ok": True,
+        "deleted_photos": len(photos),
+        "orphan_files": orphans,
+        "freed_bytes": freed,
+    }
 
 
 @router.post("/reset")

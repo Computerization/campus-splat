@@ -26,7 +26,7 @@ USABLE_STATUSES = ("ok", "warning")
 
 
 def _empty_counts() -> dict:
-    return {"ok": 0, "warning": 0, "rejected": 0, "total": 0, "usable": 0}
+    return {"ok": 0, "warning": 0, "rejected": 0, "checking": 0, "total": 0, "usable": 0}
 
 
 def checkpoint_progress_map(db: OrmSession, task_ids: list[int]) -> dict[tuple[int, int], dict]:
@@ -83,6 +83,9 @@ def to_progress(checkpoint: Checkpoint, counts: dict | None) -> CheckpointProgre
     data.uploaded_ok = bucket.get("ok", 0)
     data.uploaded_warning = bucket.get("warning", 0)
     data.uploaded_rejected = bucket.get("rejected", 0)
+    # Uploaded but not judged yet: counted in the total (so the checkpoint shows
+    # up as "in progress") but never as usable.
+    data.uploaded_checking = bucket.get("checking", 0)
     data.uploaded_total = bucket.get("total", 0)
     data.uploaded_usable = bucket.get("ok", 0) + bucket.get("warning", 0)
     data.remaining = max(0, checkpoint.shot_count - data.uploaded_usable)
@@ -91,6 +94,7 @@ def to_progress(checkpoint: Checkpoint, counts: dict | None) -> CheckpointProgre
 
     # A checkpoint marked "blocked" by hand keeps that status
     if checkpoint.status != "blocked":
+        # Photos still being checked count as progress in flight, not as done
         if data.uploaded_usable >= checkpoint.shot_count:
             derived = "done"
         elif data.uploaded_total > 0:
@@ -125,6 +129,7 @@ def build_task_progress(
         agg["ok"] += item.uploaded_ok
         agg["warning"] += item.uploaded_warning
         agg["rejected"] += item.uploaded_rejected
+        agg["checking"] += item.uploaded_checking
         agg["total"] += item.uploaded_total
         target_total += max(1, item.shot_count)
         usable_total += min(item.uploaded_usable, item.shot_count)
@@ -143,6 +148,7 @@ def build_task_progress(
         photo_ok=agg["ok"],
         photo_warning=agg["warning"],
         photo_rejected=agg["rejected"],
+        photo_checking=agg["checking"],
         contributors=sorted(contributors),
         active_volunteers=list(db.scalars(select(VolunteerAccount.username).join(TaskAssignment,
             TaskAssignment.volunteer_id == VolunteerAccount.id).where(TaskAssignment.task_id == task.id,

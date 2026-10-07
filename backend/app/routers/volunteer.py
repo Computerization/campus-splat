@@ -26,6 +26,7 @@ from ..schemas import (
 from ..security import require_volunteer
 from ..services import stats
 from ..services.ingest import ingest_upload
+from ..services.quality_jobs import result_from_photo
 
 router = APIRouter(prefix="/api/volunteer", tags=["volunteer"])
 
@@ -143,6 +144,41 @@ def upload_photos(
     checkpoint_map = stats.checkpoint_progress_map(db, [task.id])
     progress: CheckpointProgressOut = stats.to_progress(checkpoint, checkpoint_map.get((task.id, checkpoint.id)))
     return UploadBatchOut(results=results, checkpoint=progress)
+
+
+@router.get("/photos", response_model=list[UploadResultOut])
+def photo_results(
+    ids: str = Query(..., description="逗号分隔的照片 id，最多 60 张"),
+    session: AuthSession = Depends(require_volunteer),
+    db: OrmSession = Depends(get_db),
+) -> list[UploadResultOut]:
+    """Verdicts for photos this session uploaded.
+
+    The submission reply only says "received"; the phone polls this while the
+    background worker (services/quality_jobs.py) checks the batch, so each photo
+    flips from ``checking`` to its result on screen.
+
+    Scoped by the session that uploaded them, not by a task: a volunteer account
+    claims tasks inside the app and is not bound to a single one (docs/README).
+    """
+    wanted: list[int] = []
+    for chunk in (ids or "").split(","):
+        text = chunk.strip()
+        if text.isdigit():
+            wanted.append(int(text))
+    wanted = wanted[:60]
+    if not wanted:
+        return []
+
+    photos = db.execute(
+        select(Photo).where(
+            Photo.id.in_(wanted),
+            Photo.session_id == session.token,
+        )
+    ).scalars().all()
+    order = {photo_id: index for index, photo_id in enumerate(wanted)}
+    photos.sort(key=lambda photo: order.get(photo.id, len(wanted)))
+    return [result_from_photo(photo) for photo in photos]
 
 
 @router.get("/my/photos", response_model=list[PhotoOut])

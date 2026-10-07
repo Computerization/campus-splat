@@ -34,7 +34,8 @@ function RequireVolunteer({ children }: { children: JSX.Element }) {
   const { ready, isVolunteer } = useAuth()
   const location = useLocation()
   if (!ready) return <Spinner />
-  // Admins may also browse the volunteer UI, which is handy for debugging
+  // Volunteers are accounts of their own now (they claim tasks inside the app),
+  // so this only needs to know that the visitor is one.
   if (!isVolunteer) {
     return <Navigate to="/join" state={{ from: location.pathname }} replace />
   }

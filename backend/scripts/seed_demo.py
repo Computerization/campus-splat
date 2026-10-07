@@ -190,19 +190,51 @@ def make_task(
     for checkpoint in checkpoints:
         for _ in range(photos_each):
             seed += 13
-            files.append(('files',(f'demo{seed}.jpg', make_photo(seed), 'image/jpeg')))
-            manifest.append({'checkpoint_id':checkpoint['id']})
+            files.append(('files', (f'demo{seed}.jpg', make_photo(seed), 'image/jpeg')))
+            manifest.append({'checkpoint_id': checkpoint['id']})
     response = client.post(f'/api/volunteer/tasks/{task["id"]}/submit', headers=volunteer_headers,
-        data={'manifest':json.dumps(manifest)}, files=files)
+        data={'manifest': json.dumps(manifest)}, files=files)
     response.raise_for_status()
+    # The quality check runs in the background, and a reconstruction only uses
+    # judged photos — wait for it before accepting the submission
+    wait_for_quality(client, headers)
     assignment_id = response.json()['assignment']['id']
     accepted = client.post(f'/api/admin/submissions/{assignment_id}/review', headers=headers,
-        json={'decision':'accept'})
+        json={'decision': 'accept'})
     accepted.raise_for_status()
     client.delete('/api/auth/volunteer/account', headers=volunteer_headers).raise_for_status()
     uploaded = len(files)
     print(f"  {task['name']}：{len(checkpoints)} 个点位，上传 {uploaded} 张（全部可用）")
     return task
+
+
+def wait_for_quality(client, headers: dict, *, timeout: float = 300.0) -> None:
+    """Wait until the background quality worker has judged every uploaded photo.
+
+    An upload reply no longer waits for its check (services/quality_jobs.py) —
+    but a reconstruction only uses judged photos, so the demo does what a
+    volunteer watching their phone does: poll until nothing is left in
+    `checking`.
+    """
+    deadline = time.time() + timeout
+    announced = False
+    while True:
+        # `total` counts photos of every task; in a demo database that is the
+        # ones this script just uploaded.
+        page = client.get(
+            "/api/admin/photos", params={"status": "checking", "limit": 1}, headers=headers
+        ).json()
+        pending = page.get("total", 0)
+        if not pending:
+            if announced:
+                print("  后台质检完成")
+            return
+        if time.time() > deadline:
+            raise RuntimeError(f"后台质检 {timeout:.0f}s 内没有跑完（还剩 {pending} 张）")
+        if not announced:
+            print(f"  等待后台质检（{pending} 张待检）…")
+            announced = True
+        time.sleep(0.4)
 
 
 def run_reconstruction(client, headers: dict, task_id: int, label: str) -> dict:

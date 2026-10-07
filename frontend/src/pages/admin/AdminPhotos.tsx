@@ -14,7 +14,7 @@ import {
   useAsync,
 } from '../../components/common'
 import { issueLabel, useI18n } from '../../i18n'
-import type { Photo, PhotoStatus } from '../../types'
+import type { Photo, PhotoStatus, ReviewStatus } from '../../types'
 
 const PAGE_SIZE = 60
 
@@ -50,7 +50,7 @@ export default function AdminPhotos() {
     window.setTimeout(() => setToast(null), 2500)
   }
 
-  async function review(photo: Photo, next: PhotoStatus) {
+  async function review(photo: Photo, next: ReviewStatus) {
     try {
       await api.reviewPhoto(photo.id, next)
       flash(
@@ -122,6 +122,7 @@ export default function AdminPhotos() {
             <option value="ok">{t('status.ok')}</option>
             <option value="warning">{t('status.warning')}</option>
             <option value="rejected">{t('status.rejected')}</option>
+            <option value="checking">{t('status.checking')}</option>
           </select>
         </label>
 

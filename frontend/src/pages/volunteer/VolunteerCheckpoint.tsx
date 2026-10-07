@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../../api'
 import { Badge, ErrorBox, ProgressBar, Spinner, formatDateTime, useAsync } from '../../components/common'
@@ -7,6 +7,8 @@ import { issueLabel, useI18n } from '../../i18n'
 import type { CheckpointProgress, UploadBatch, UploadResult } from '../../types'
 
 const MAX_FILES = 20
+/** How often the page asks for verdicts while a batch waits in the quality queue. */
+const POLL_MS = 1500
 
 export default function VolunteerCheckpoint() {
   const { t } = useI18n()
@@ -24,24 +26,83 @@ export default function VolunteerCheckpoint() {
   const [percent, setPercent] = useState(0)
   const [batch, setBatch] = useState<UploadBatch | null>(null)
   const [uploadError, setUploadError] = useState<unknown>(null)
+  // The photos of this session's batches, keyed by id. Uploaded photos appear
+  // here as "checking" and flip to their verdict while the background worker
+  // (backend services/quality_jobs.py) runs.
+  const [results, setResults] = useState<Record<number, UploadResult>>({})
+  const [trackedIds, setTrackedIds] = useState<number[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
+
+  const pendingIds = trackedIds.filter((photoId) => results[photoId]?.status === 'checking')
+  const pendingKey = pendingIds.join(',')
+
+  // Poll until every photo of the batch has a verdict. Keyed on the *set* of
+  // pending ids so the timer is not rebuilt on every render.
+  useEffect(() => {
+    if (!pendingKey) return
+    const ids = pendingKey.split(',').map(Number)
+    let cancelled = false
+
+    const timer = window.setInterval(() => {
+      void (async () => {
+        try {
+          const fresh = await api.photoResults(ids)
+          if (cancelled || fresh.length === 0) return
+          setResults((current) => {
+            const next = { ...current }
+            for (const item of fresh) {
+              if (item.photo_id !== null) next[item.photo_id] = item
+            }
+            return next
+          })
+          // The checkpoint counter moves as verdicts arrive
+          await silentRefresh()
+        } catch {
+          /* keep polling — a dropped request is not worth an error banner */
+        }
+      })()
+    }, POLL_MS)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [pendingKey, silentRefresh])
 
   if (loading) return <Spinner />
   if (error) return <ErrorBox error={error} onRetry={reload} />
   if (!data) return null
 
   const cp: CheckpointProgress = batch?.checkpoint ?? data.checkpoint
-  const place = [cp.building, cp.floor, cp.room].filter(Boolean).join(' · ')
+  // "房间/走廊/…" is the only free-text place hint left (the old 楼栋/楼层 fields
+  // are gone from the UI)
+  const place = cp.room ?? ''
   const percentDone = Math.min(100, (cp.uploaded_usable / Math.max(1, cp.shot_count)) * 100)
+  const trackedResults = trackedIds.map((photoId) => results[photoId]).filter(Boolean)
+  const checkedCount = trackedIds.length - pendingIds.length
 
   async function upload() {
     if (!files.length) return
     setUploading(true)
     setUploadError(null)
-    setBatch(null)
     try {
+      // Returns as soon as the files are on disk: the check itself runs in the
+      // background, so the next batch can be picked right away
       const result = await api.uploadPhotos(checkpointId, files, setPercent)
       setBatch(result)
+      setResults((current) => {
+        const next = { ...current }
+        for (const item of result.results) {
+          if (item.photo_id !== null) next[item.photo_id] = item
+        }
+        return next
+      })
+      setTrackedIds((current) => [
+        ...current,
+        ...result.results
+          .map((item) => item.photo_id)
+          .filter((value): value is number => value !== null),
+      ])
       setFiles([])
       if (inputRef.current) inputRef.current.value = ''
       await silentRefresh()
@@ -85,38 +146,32 @@ export default function VolunteerCheckpoint() {
             </span>
           </div>
           <ProgressBar value={percentDone} height={10} />
+          {pendingIds.length > 0 && (
+            <p className="small muted" style={{ marginBottom: 0, marginTop: 8 }}>
+              ⏳ {t('cp.checkingCount', { count: pendingIds.length })}
+            </p>
+          )}
         </div>
 
-        {(cp.instructions || cp.find_hint || (cp.angles && cp.angles.length > 0)) && (
+        {cp.angles && cp.angles.length > 0 && (
           <div className="shot-guide">
             <h3>📸 {t('cp.how')}</h3>
-            {cp.instructions && (
-              <p style={{ whiteSpace: 'pre-wrap' }}>{cp.instructions}</p>
-            )}
-            {cp.find_hint && (
-              <>
-                <h3 style={{ fontSize: '0.9rem' }}>🧭 {t('cp.findHint')}</h3>
-                <p style={{ whiteSpace: 'pre-wrap' }}>{cp.find_hint}</p>
-              </>
-            )}
-            {cp.angles && cp.angles.length > 0 && (
-              <ul className="angle-list">
-                {cp.angles.map((angle, index) => (
-                  <li key={`${angle.label}-${index}`}>
-                    <strong>{angle.label || t('cp.angle', { index: index + 1 })}</strong>
-                    <span className="muted small">
-                      {angle.pitch !== null && angle.pitch !== undefined && (
-                        <> · {t('cp.pitch', { value: angle.pitch })}</>
-                      )}
-                      {angle.yaw !== null && angle.yaw !== undefined && (
-                        <> · {t('cp.yaw', { value: angle.yaw })}</>
-                      )}
-                    </span>
-                    {angle.tip && <div className="small muted">{angle.tip}</div>}
-                  </li>
-                ))}
-              </ul>
-            )}
+            <ul className="angle-list">
+              {cp.angles.map((angle, index) => (
+                <li key={`${angle.label}-${index}`}>
+                  <strong>{angle.label || t('cp.angle', { index: index + 1 })}</strong>
+                  <span className="muted small">
+                    {angle.pitch !== null && angle.pitch !== undefined && (
+                      <> · {t('cp.pitch', { value: angle.pitch })}</>
+                    )}
+                    {angle.yaw !== null && angle.yaw !== undefined && (
+                      <> · {t('cp.yaw', { value: angle.yaw })}</>
+                    )}
+                  </span>
+                  {angle.tip && <div className="small muted">{angle.tip}</div>}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 
@@ -139,7 +194,6 @@ export default function VolunteerCheckpoint() {
             onChange={(event) => {
               const picked = Array.from(event.target.files ?? []).slice(0, MAX_FILES)
               setFiles(picked)
-              setBatch(null)
               setUploadError(null)
             }}
           />
@@ -156,24 +210,39 @@ export default function VolunteerCheckpoint() {
           {uploadError ? <ErrorBox error={uploadError} /> : null}
         </div>
 
-        {batch && (
+        {trackedResults.length > 0 && (
           <div className="card">
-            <h3>{t('cp.result')}</h3>
-            <div className="stack">
-              {batch.results.map((result, index) => (
-                <ResultItem key={`${result.original_filename}-${index}`} result={result} />
+            <div className="row between" style={{ marginBottom: 8 }}>
+              <h3 style={{ margin: 0 }}>{t('cp.result')}</h3>
+              {pendingIds.length > 0 && (
+                <span className="small muted">
+                  {t('cp.qualityProgress', { done: checkedCount, total: trackedIds.length })}
+                </span>
+              )}
+            </div>
+            {pendingIds.length > 0 && (
+              <ProgressBar value={(checkedCount / Math.max(1, trackedIds.length)) * 100} height={6} />
+            )}
+            <div className="stack" style={{ marginTop: 10 }}>
+              {trackedResults.map((result, index) => (
+                <ResultItem
+                  key={`${result.photo_id ?? result.original_filename}-${index}`}
+                  result={result}
+                />
               ))}
             </div>
           </div>
         )}
 
-        {!batch && data.my_photos.length > 0 && (
+        {pendingIds.length === 0 && data.my_photos.length > 0 && (
           <div className="card">
             <h3>{t('cp.mine')}</h3>
             <div className="photo-grid">
               {data.my_photos.map((photo) => (
                 <div key={photo.id} className={`photo-thumb ${photo.status}`}>
-                  {photo.thumb_url && <img src={photo.thumb_url} alt={photo.original_filename} loading="lazy" />}
+                  {photo.thumb_url && (
+                    <img src={photo.thumb_url} alt={photo.original_filename} loading="lazy" />
+                  )}
                   <span className="tag">{t(`status.${photo.status}` as never)}</span>
                 </div>
               ))}
@@ -192,11 +261,7 @@ export default function VolunteerCheckpoint() {
           disabled={uploading || files.length === 0}
           onClick={() => void upload()}
         >
-          {uploading
-            ? percent > 0 && percent < 100
-              ? t('cp.uploading', { percent })
-              : t('cp.checking')
-            : t('cp.upload')}
+          {uploading ? t('cp.uploading', { percent }) : t('cp.upload')}
         </button>
       </div>
     </div>
@@ -205,6 +270,20 @@ export default function VolunteerCheckpoint() {
 
 function ResultItem({ result }: { result: UploadResult }) {
   const { t } = useI18n()
+
+  // Uploaded, not judged yet — the background worker is on it
+  if (result.status === 'checking') {
+    return (
+      <div className="result-item checking">
+        <div className="head">
+          <span className="filename">{result.original_filename}</span>
+          <Badge tone="neutral">⏳ {t('status.checking')}</Badge>
+        </div>
+        {result.error && <div className="issue-row error">{result.error}</div>}
+      </div>
+    )
+  }
+
   const tone = result.ok ? (result.status === 'warning' ? 'warn' : 'ok') : 'bad'
   const label = result.ok
     ? result.status === 'warning'

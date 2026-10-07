@@ -5,7 +5,6 @@ as a path relative to the data directory, which keeps the data folder portable.
 from __future__ import annotations
 
 import hashlib
-import secrets
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,10 +28,9 @@ class SavedFile:
     sha256: str
     size_bytes: int
     ext: str
-
-
-def _new_name(ext: str) -> str:
-    return f"{secrets.token_hex(16)}{ext}"
+    # The name it ended up with on disk; equals the requested one unless that
+    # was taken (two volunteers, same number) and a suffix was appended.
+    name: str = ""
 
 
 def check_extension(filename: str) -> str:
@@ -45,13 +43,25 @@ def check_extension(filename: str) -> str:
     return ext
 
 
+def upload_folder(rel_folder: str) -> Path:
+    """Resolve <uploads>/<folder>, refusing anything that escapes the root.
+
+    The folder is built from task/checkpoint names (already normalized to ASCII),
+    but this is the last line of defence before writing to disk.
+    """
+    folder = (rel_folder or "").strip().strip("/\\")
+    if not folder or ".." in Path(folder).parts:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "非法目录名")
+    return config.UPLOAD_DIR / folder
+
+
 def _upload_prefix() -> str | None:
     """UPLOAD_DIR relative to DATA_DIR, or None when it lives elsewhere.
 
     With the default layout this is "uploads", so stored paths keep exactly the
-    shape they have always had ("uploads/task3/cp5/abc.jpg"). When the photos
-    live on another disk there is no relative form, and the absolute path is
-    stored instead.
+    shape they have always had ("uploads/Task/Cp/0001_ZhangSan.jpg"). When the
+    photos live on another disk there is no relative form, and the absolute path
+    is stored instead.
     """
     try:
         return config.UPLOAD_DIR.relative_to(config.DATA_DIR).as_posix()
@@ -62,25 +72,31 @@ def _upload_prefix() -> str | None:
 def save_stream(
     fileobj,
     *,
-    task_id: int,
-    checkpoint_id: int | None,
+    folder: str,
     filename: str,
     max_bytes: int | None = None,
 ) -> SavedFile:
-    """Stream an upload to disk while computing its sha256.
+    """Stream an upload to ``<uploads>/<folder>/<filename>``, hashing as we go.
 
-    `max_bytes` is enforced *during* the write: checking afterwards would let a
+    ``max_bytes`` is enforced *during* the write: checking afterwards would let a
     single huge upload fill the disk first.
     """
     config.ensure_dirs()
     ext = check_extension(filename)
 
-    folder = Path(f"task{task_id}") / (f"cp{checkpoint_id}" if checkpoint_id else "unassigned")
-    abs_folder = config.UPLOAD_DIR / folder
+    abs_folder = upload_folder(folder)
     abs_folder.mkdir(parents=True, exist_ok=True)
 
-    name = _new_name(ext)
-    abs_path = abs_folder / name
+    # Two volunteers can compute the same index at the same moment; the file name
+    # is what decides, so step aside instead of overwriting someone's photo.
+    stem = Path(filename).stem
+    abs_path = abs_folder / filename
+    bump = 1
+    while abs_path.exists():
+        abs_path = abs_folder / f"{stem}-{bump}{ext}"
+        bump += 1
+    name = abs_path.name
+
     prefix = _upload_prefix()
     stored = (
         (Path(prefix) / folder / name).as_posix() if prefix is not None else str(abs_path)
@@ -118,6 +134,7 @@ def save_stream(
         sha256=digest.hexdigest(),
         size_bytes=size,
         ext=ext,
+        name=name,
     )
 
 
@@ -204,11 +221,48 @@ def delete_file(rel_path: str | None) -> None:
         return
 
 
+def tree_bytes(path: Path, seen: set[tuple[int, int]] | None = None) -> int:
+    """Size of a directory tree, counting each inode once.
+
+    The training input directory is made of hard links to the uploaded photos, so
+    counting both trees would report the same bytes twice and make "how big are
+    the photos" unanswerable. Pass one shared ``seen`` set across several calls to
+    de-duplicate them.
+    """
+    if not path.exists():
+        return 0
+    counted = seen if seen is not None else set()
+    total = 0
+    for child in path.rglob("*"):
+        if not child.is_file():
+            continue
+        try:
+            info = child.stat()
+        except OSError:
+            continue
+        key = (info.st_dev, info.st_ino)
+        if key in counted:
+            continue
+        counted.add(key)
+        total += info.st_size
+    return total
+
+
 def disk_usage() -> dict:
     usage = shutil.disk_usage(config.DATA_DIR)
-    used_by_us = sum(p.stat().st_size for p in config.UPLOAD_DIR.rglob("*") if p.is_file())
+    # One shared inode set: a photo that is hard-linked into a training run is
+    # counted where it lives (uploads), not a second time in training/.
+    seen: set[tuple[int, int]] = set()
+    photos = tree_bytes(config.UPLOAD_DIR, seen)
+    training = tree_bytes(config.TRAINING_DIR, seen)
+    thumbnails = tree_bytes(config.THUMB_DIR, seen)
+    logs = tree_bytes(config.LOG_DIR, seen)
     return {
         "total_bytes": usage.total,
         "free_bytes": usage.free,
-        "photos_bytes": used_by_us,
+        "photos_bytes": photos,
+        "training_bytes": training,
+        "thumbnails_bytes": thumbnails,
+        "logs_bytes": logs,
+        "managed_bytes": photos + training + thumbnails + logs,
     }

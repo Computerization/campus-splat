@@ -6,6 +6,7 @@ import {
   Card,
   EmptyState,
   ErrorBox,
+  Modal,
   ProgressBar,
   Spinner,
   formatBytes,
@@ -69,6 +70,9 @@ export default function AdminTraining() {
   const [notice, setNotice] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<number | null>(null)
   const [logRunId, setLogRunId] = useState<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<TrainingRun | null>(null)
+  const [deleteFiles, setDeleteFiles] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const { data: runs, loading, reload, silentRefresh } = useAsync(() => api.trainingRuns(30), [])
   const { data: tasks } = useAsync(() => api.listTasks(false), [])
@@ -139,6 +143,27 @@ export default function AdminTraining() {
     if (!window.confirm(t('admin.training.cancelConfirm', { name: run.name }))) return
     await api.cancelTrainingRun(run.id)
     await reload(true)
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      const result = await api.deleteTrainingRun(deleteTarget.id, deleteFiles)
+      const name = deleteTarget.name
+      setDeleteTarget(null)
+      setDeleteFiles(false)
+      setNotice(
+        result.files_deleted
+          ? t('admin.training.deletedWithFiles', { name })
+          : t('admin.training.deletedKeepingFiles', { name, path: result.kept_at ?? '' }),
+      )
+      await Promise.all([reload(true), refreshSystem()])
+    } catch (err) {
+      setError(err)
+    } finally {
+      setDeleting(false)
+    }
   }
 
   return (
@@ -456,6 +481,10 @@ export default function AdminTraining() {
               onLog={() => setLogRunId(logRunId === run.id ? null : run.id)}
               showLog={logRunId === run.id}
               formatDuration={formatDuration}
+              onDelete={() => {
+                setDeleteFiles(false)
+                setDeleteTarget(run)
+              }}
               onRetried={async (message) => {
                 setNotice(message)
                 await Promise.all([reload(true), refreshSystem()])
@@ -464,6 +493,42 @@ export default function AdminTraining() {
           ))}
         </div>
       )}
+
+      <Modal
+        open={deleteTarget !== null}
+        title={t('admin.training.deleteTitle')}
+        onClose={() => setDeleteTarget(null)}
+        footer={
+          <>
+            <button type="button" className="btn btn-ghost" onClick={() => setDeleteTarget(null)}>
+              {t('common.cancel')}
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={deleting}
+              onClick={() => void confirmDelete()}
+            >
+              {deleting ? t('common.loading') : t('admin.training.deleteConfirmButton')}
+            </button>
+          </>
+        }
+      >
+        <p>{t('admin.training.deleteBody', { name: deleteTarget?.name ?? '' })}</p>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={deleteFiles}
+            onChange={(event) => setDeleteFiles(event.target.checked)}
+          />
+          <span>{t('admin.training.deleteFiles')}</span>
+        </label>
+        <p className="small muted">
+          {deleteFiles
+            ? t('admin.training.deleteFilesYes', { path: deleteTarget?.output_path ?? '' })
+            : t('admin.training.deleteFilesNo', { path: deleteTarget?.output_path ?? '' })}
+        </p>
+      </Modal>
     </>
   )
 }
@@ -476,6 +541,7 @@ function RunCard({
   onLog,
   showLog,
   formatDuration,
+  onDelete,
   onRetried,
 }: {
   run: TrainingRun
@@ -485,6 +551,7 @@ function RunCard({
   onLog: () => void
   showLog: boolean
   formatDuration: (seconds: number | null | undefined) => string
+  onDelete: () => void
   onRetried: (message: string) => Promise<void> | void
 }) {
   const { t } = useI18n()
@@ -553,6 +620,11 @@ function RunCard({
         {run.status === 'running' || run.status === 'queued' ? (
           <button type="button" className="btn btn-danger sm" onClick={onCancel}>
             {t('admin.training.cancel')}
+          </button>
+        ) : null}
+        {run.status !== 'running' ? (
+          <button type="button" className="btn btn-ghost sm" onClick={onDelete}>
+            🗑 {t('common.delete')}
           </button>
         ) : null}
         {run.output_path && <span className="small muted mono">{run.output_path}</span>}

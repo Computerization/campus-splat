@@ -14,7 +14,7 @@ from ..database import get_db
 from ..models import AuthSession, VolunteerAccount, Task, TaskAssignment, Photo, Checkpoint, utcnow
 from ..schemas import TaskOut, CheckpointOut
 from ..security import require_admin, require_volunteer, require_owned_task
-from ..services.ingest import ingest_upload
+from ..services.ingest import dispatch_quality, ingest_upload
 from .. import storage
 from .auth import archive_account
 from .volunteer import _photo_out
@@ -232,6 +232,7 @@ def submit(task_id: int, manifest: str = Form(...), files: list[UploadFile] = Fi
         raise HTTPException(400, '必须完成全部拍摄点的照片数量才能统一提交')
     old_paths = file_paths([p for p in old_photos if p.id not in retained_ids])
     new_paths = []
+    new_photos = []
     results = []
     try:
         for photo in old_photos:
@@ -250,6 +251,7 @@ def submit(task_id: int, manifest: str = Form(...), files: list[UploadFile] = Fi
                 raise HTTPException(400, f'{result.original_filename}：{result.error}')
             photo = db.get(Photo, result.photo_id)
             new_paths.extend(file_paths([photo]))
+            new_photos.append(photo)
             results.append(result)
         assignment.status = 'submitted'
         assignment.submitted_at = assignment.updated_at = utcnow()
@@ -262,6 +264,10 @@ def submit(task_id: int, manifest: str = Form(...), files: list[UploadFile] = Fi
         for path in new_paths:
             storage.delete_file(path)
         raise
+    # The quality worker reads its photos in its own session, so the checks can
+    # only be queued once this batch is committed.
+    for photo in new_photos:
+        dispatch_quality(db, photo)
     for path in old_paths:
         storage.delete_file(path)
     return {'assignment': assignment_out(db, assignment), 'results': results}

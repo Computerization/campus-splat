@@ -56,12 +56,19 @@ def get_db() -> Iterator[Session]:
 # to change types or add indexes.
 _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     "auth_sessions": {"admin_id": "INTEGER", "volunteer_id": "INTEGER"},
-    "tasks": {"owner_admin_id": "INTEGER DEFAULT 1"},
+    "tasks": {
+        # Which fixed administrator owns the task (001-003)
+        "owner_admin_id": "INTEGER DEFAULT 1",
+        # ASCII folder under data/uploads/ (set when the row is created)
+        "folder": "VARCHAR(80)",
+    },
     "photos": {"volunteer_id": "INTEGER", "assignment_id": "INTEGER"},
     "checkpoints": {
         "length_m": "FLOAT",
         "width_m": "FLOAT",
         "room_height_m": "FLOAT",
+        # ASCII folder under data/uploads/ (set when the row is created)
+        "folder": "VARCHAR(80)",
     },
     # The graded pipeline (docs/training-pipeline.md) turned a "job" into a run
     # with blocks, artifacts and a reuse pointer.

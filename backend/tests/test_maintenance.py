@@ -144,9 +144,8 @@ def test_photos_on_another_disk_are_stored_absolutely(tmp_path, monkeypatch):
 
     saved = storage.save_stream(
         io.BytesIO(jpeg_bytes(make_textured_image(400, 300, seed=5))),
-        task_id=1,
-        checkpoint_id=None,
-        filename="x.jpg",
+        folder="Task1/Unassigned",
+        filename="0001_ZhangSan.jpg",
     )
 
     assert Path(saved.rel_path).is_absolute()
@@ -159,6 +158,31 @@ def test_photos_on_another_disk_are_stored_absolutely(tmp_path, monkeypatch):
 
 
 def test_default_layout_keeps_the_historical_path_shape():
-    """With the default layout the stored path must stay "uploads/taskN/…", so
-    existing databases keep working untouched."""
+    """With the default layout the stored path stays "uploads/<task>/<checkpoint>/…",
+    so `resolve` keeps working on the photos that are already on disk."""
     assert storage._upload_prefix() == "uploads"
+
+
+def test_upload_folder_refuses_to_escape_the_uploads_root():
+    for hostile in ("../secrets", "Task1/../../secrets", "", "   "):
+        with pytest.raises(HTTPException):
+            storage.upload_folder(hostile)
+    assert storage.upload_folder("/Task1/Cp/").name == "Cp"
+
+
+def test_save_stream_never_overwrites_an_existing_photo(tmp_path, monkeypatch):
+    """Two volunteers can compute the same index at the same moment; the file on
+    disk must win over the newcomer rather than be replaced."""
+    monkeypatch.setattr(config, "UPLOAD_DIR", tmp_path / "uploads")
+    image = jpeg_bytes(make_textured_image(400, 300, seed=7))
+
+    first = storage.save_stream(
+        io.BytesIO(image), folder="Task1/Cp", filename="0001_ZhangSan.jpg"
+    )
+    second = storage.save_stream(
+        io.BytesIO(image), folder="Task1/Cp", filename="0001_ZhangSan.jpg"
+    )
+
+    assert first.name == "0001_ZhangSan.jpg"
+    assert second.name == "0001_ZhangSan-1.jpg"
+    assert Path(first.rel_path).is_file() and Path(second.rel_path).is_file()

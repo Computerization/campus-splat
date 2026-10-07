@@ -99,6 +99,10 @@ class Task(Base):
     # indoor (volunteers' phones) | outdoor (drone)
     description: Mapped[str | None] = mapped_column(Text)
     location_hint: Mapped[str | None] = mapped_column(String(255))
+    # ASCII name derived from `name` (services/naming.py) — the photos of this
+    # task live under data/uploads/<folder>/<checkpoint folder>/… It is fixed
+    # when the task is created, so renaming never moves files around.
+    folder: Mapped[str | None] = mapped_column(String(80))
     access_code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(16), default="active")  # active | archived
     cover_image: Mapped[str | None] = mapped_column(String(255))
@@ -127,6 +131,8 @@ class Checkpoint(Base):
     order_index: Mapped[int] = mapped_column(Integer, default=0)
 
     name: Mapped[str] = mapped_column(String(128))
+    # Same idea as Task.folder: data/uploads/<task folder>/<folder>/…
+    folder: Mapped[str | None] = mapped_column(String(80))
     building: Mapped[str | None] = mapped_column(String(64))
     floor: Mapped[str | None] = mapped_column(String(32))
     room: Mapped[str | None] = mapped_column(String(64))

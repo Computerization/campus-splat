@@ -8,6 +8,7 @@ import type {
   PhotoPage,
   PhotoStatus,
   PlacementUpdate,
+  ReviewStatus,
   Session,
   SystemInfo,
   Task,
@@ -19,6 +20,7 @@ import type {
   TrainingRun,
   TrainingRunDetail,
   UploadBatch,
+  UploadResult,
 } from './types'
 
 const TOKEN_KEY = 'threedgs.token'
@@ -129,6 +131,10 @@ export const api = {
   board: () => request<Board>('/api/volunteer/board'),
   checkpointDetail: (id: number) => request<CheckpointDetail>(`/api/volunteer/checkpoints/${id}`),
   myPhotos: (limit = 80) => request<Photo[]>(`/api/volunteer/my/photos?limit=${limit}`),
+  // The verdicts of photos already uploaded — the quality check runs in the
+  // background, so the page polls this until nothing is left "checking"
+  photoResults: (ids: number[]) =>
+    request<UploadResult[]>(`/api/volunteer/photos?ids=${ids.join(',')}`),
   uploadPhotos: (checkpointId: number, files: File[], onProgress?: (percent: number) => void) =>
     uploadWithProgress<UploadBatch>(
       `/api/volunteer/checkpoints/${checkpointId}/photos`,
@@ -192,7 +198,7 @@ export const api = {
     })
     return request<PhotoPage>(`/api/admin/photos?${search.toString()}`)
   },
-  reviewPhoto: (id: number, status: PhotoStatus, note?: string) =>
+  reviewPhoto: (id: number, status: ReviewStatus, note?: string) =>
     request<Photo>(`/api/admin/photos/${id}`, { method: 'PATCH', ...json({ status, note }) }),
   deletePhoto: (id: number) =>
     request<{ ok: boolean }>(`/api/admin/photos/${id}`, { method: 'DELETE' }),
@@ -222,6 +228,15 @@ export const api = {
   }) => request<TrainingRunDetail>('/api/admin/training', { method: 'POST', ...json(payload) }),
   cancelTrainingRun: (id: number) =>
     request<TrainingRunDetail>(`/api/admin/training/${id}/cancel`, { method: 'POST' }),
+  /** Drop a run's record; `purgeFiles` also deletes data/training/runN. */
+  deleteTrainingRun: (id: number, purgeFiles: boolean) =>
+    request<{
+      ok: boolean
+      run_id: number
+      files_deleted: boolean
+      freed_bytes: number
+      kept_at: string | null
+    }>(`/api/admin/training/${id}?purge_files=${purgeFiles}`, { method: 'DELETE' }),
   trainingLog: (id: number, tail = 200) =>
     request<{ lines: string[]; path: string | null; total?: number }>(
       `/api/admin/training/${id}/log?tail=${tail}`,

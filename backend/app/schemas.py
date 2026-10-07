@@ -9,7 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 TaskKind = Literal["indoor", "outdoor"]
 CheckpointStatus = Literal["pending", "in_progress", "done", "blocked"]
-PhotoStatus = Literal["ok", "warning", "rejected"]
+# "checking" is the transient state while the background worker analyzes an
+# upload (services/quality_jobs.py) — the volunteer sees it as 质检中.
+PhotoStatus = Literal["ok", "warning", "rejected", "checking"]
+# What an admin may set by hand when overriding the heuristic verdict; "checking"
+# is a state, not a verdict, so it is not offered there.
+ReviewStatus = Literal["ok", "warning", "rejected"]
 TrainingStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 
 
@@ -76,6 +81,8 @@ class TaskOut(ORMModel):
     kind: str
     description: str | None
     location_hint: str | None
+    # ASCII folder under data/uploads/ that holds this task's photos
+    folder: str | None = None
     access_code: str
     status: str
     cover_image: str | None
@@ -138,6 +145,8 @@ class CheckpointOut(ORMModel):
     task_id: int
     order_index: int
     name: str
+    # ASCII folder under data/uploads/<task folder>/ that holds these photos
+    folder: str | None = None
     building: str | None
     floor: str | None
     room: str | None
@@ -168,6 +177,9 @@ class CheckpointProgressOut(CheckpointOut):
     uploaded_ok: int = 0
     uploaded_warning: int = 0
     uploaded_rejected: int = 0
+    # Uploaded but still being checked in the background (nothing to count as
+    # usable yet — the volunteer's phone polls until it drops to 0)
+    uploaded_checking: int = 0
     uploaded_total: int = 0
     uploaded_usable: int = 0
     remaining: int = 0
@@ -218,7 +230,7 @@ class PhotoPage(BaseModel):
 
 
 class PhotoReviewIn(BaseModel):
-    status: PhotoStatus
+    status: ReviewStatus
     note: str | None = None
 
 
@@ -255,6 +267,9 @@ class TaskProgressOut(BaseModel):
     photo_ok: int = 0
     photo_warning: int = 0
     photo_rejected: int = 0
+    # Uploaded but still in the background quality check: part of photo_total,
+    # counted as neither usable nor rejected
+    photo_checking: int = 0
     contributors: list[str] = Field(default_factory=list)
     active_volunteers: list[str] = Field(default_factory=list)
     progress_percent: float = 0.0

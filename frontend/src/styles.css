@@ -979,6 +979,14 @@ textarea {
 .photo-thumb.rejected {
   border-color: var(--bad);
 }
+/* Uploaded, waiting for the background quality worker */
+.photo-thumb.checking {
+  border-color: var(--border);
+  border-style: dashed;
+}
+.photo-thumb.checking img {
+  opacity: 0.6;
+}
 
 .photo-thumb .tag {
   position: absolute;
@@ -1024,6 +1032,12 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* Uploaded, waiting for the background quality worker */
+.result-item.checking {
+  border-style: dashed;
+  background: var(--surface-2);
 }
 
 .result-item .head {

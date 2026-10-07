@@ -101,6 +101,30 @@ QUALITY = {
     "duplicate_hamming": 4,
 }
 
+# The upload request only streams the file to disk, hashes it and refuses
+# byte-identical repeats — the heuristic check (decode, metrics, thumbnail,
+# near-duplicate scan) runs in the background, so a volunteer standing in a
+# corridor can start the next batch immediately and poll for the verdict.
+# THREEDGS_QUALITY_INLINE=1 runs the check inside the request instead (the test
+# suite and tiny single-user deployments do that).
+_QUALITY_INLINE_VALUES = ("1", "true", "yes", "on")
+
+
+def quality_inline() -> bool:
+    """True = check inside the upload request instead of the worker queue."""
+    return (
+        os.environ.get("THREEDGS_QUALITY_INLINE", "0").strip().lower()
+        in _QUALITY_INLINE_VALUES
+    )
+
+
+def quality_workers() -> int:
+    """How many background quality checks may run at once (1-4, default 1)."""
+    try:
+        return max(1, min(4, int(os.environ.get("THREEDGS_QUALITY_WORKERS", "1"))))
+    except (TypeError, ValueError):
+        return 1
+
 # Entry point for real reconstruction. Leave empty to only track jobs without
 # launching anything.
 TRAINING_COMMAND = os.environ.get("THREEDGS_TRAINING_COMMAND", "")
