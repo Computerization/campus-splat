@@ -18,10 +18,10 @@ export default function Landing() {
         <p className="lead">{t('landing.subtitle')}</p>
 
         <div className="entry-grid">
-          <Link className="entry" to={session?.task_id || isAdmin ? '/v' : '/join'}>
+          <Link className="entry" to={session?.role === 'volunteer' ? '/v' : '/join'}>
             <span className="icon">📱</span>
             <strong>{t('landing.volunteer')}</strong>
-            <span className="desc">{t('landing.volunteer.desc')}</span>
+            <span className="desc">注册独立账号，接取拍摄任务，统一提交成果</span>
           </Link>
           <Link className="entry" to={isAdmin ? '/admin' : '/admin/login'}>
             <span className="icon">🖥️</span>

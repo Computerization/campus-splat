@@ -31,8 +31,8 @@ def _photo_upload(client, admin_headers, name: str):
         headers=admin_headers,
     ).json()
     join = client.post(
-        "/api/auth/volunteer/join",
-        json={"access_code": task["access_code"], "nickname": "维护测试"},
+        "/api/auth/volunteer/register",
+        json={"username": f"维护测试{task['id']}", "password":"shared"},
     ).json()
     response = _upload(
         client,
@@ -49,15 +49,14 @@ def _photo_upload(client, admin_headers, name: str):
 
 def test_reveal_needs_a_target(client, admin_headers):
     response = client.post("/api/admin/reveal", json={}, headers=admin_headers)
-    assert response.status_code == 400
-    assert "其中之一" in response.json()["detail"]
+    assert response.status_code == 403
 
 
 def test_reveal_rejects_paths_outside_the_data_dir(client, admin_headers):
     response = client.post(
         "/api/admin/reveal", json={"path": "../../../windows/system32"}, headers=admin_headers
     )
-    assert response.status_code in (400, 404)
+    assert response.status_code == 403
 
 
 def test_reveal_photo_points_the_file_manager_at_the_photo(client, admin_headers, monkeypatch):
@@ -107,13 +106,8 @@ def test_reveal_command_is_platform_specific(monkeypatch, platform, expected):
 
 
 def test_reveal_scope_points_at_the_configured_upload_dir(client, admin_headers, monkeypatch):
-    opened: list[list[str]] = []
-    monkeypatch.setattr(
-        subprocess, "Popen", lambda command, **kwargs: opened.append([str(p) for p in command])
-    )
-    response = client.post("/api/admin/reveal", json={"scope": "uploads"}, headers=admin_headers)
-    assert response.status_code == 200
-    assert str(config.UPLOAD_DIR) in " ".join(opened[0])
+    response = client.post('/api/admin/reveal',json={'scope':'uploads'},headers=admin_headers)
+    assert response.status_code == 403
 
 
 # ---------------------------------------------------------------- reset
@@ -130,32 +124,12 @@ def _photo_file(photo_id: int) -> Path:
 
 
 def test_reset_wipes_database_and_files(client, admin_headers):
-    task, photo_id = _photo_upload(client, admin_headers, "清空测试楼")
+    task, photo_id = _photo_upload(client,admin_headers,'禁止全局清空')
     photo_path = _photo_file(photo_id)
+    response = client.post('/api/admin/reset',json={'confirm':'DELETE'},headers=admin_headers)
+    assert response.status_code == 403
     assert photo_path.is_file()
-
-    # A wrong confirm word changes nothing
-    refused = client.post("/api/admin/reset", json={"confirm": "nope"}, headers=admin_headers)
-    assert refused.status_code == 400
-    assert client.get("/api/admin/tasks", headers=admin_headers).json()
-
-    response = client.post("/api/admin/reset", json={"confirm": "DELETE"}, headers=admin_headers)
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["ok"] is True
-    assert body["tasks"] >= 1
-    assert body["photos"] >= 1
-    assert body["freed_bytes"] > 0
-
-    # Nothing left in the database …
-    assert client.get("/api/admin/tasks", headers=admin_headers).json() == []
-    assert client.get("/api/admin/training", headers=admin_headers).json() == []
-    assert client.get("/api/admin/photos", headers=admin_headers).json()["total"] == 0
-    # … nor on disk
-    assert not photo_path.exists()
-    # … and the admin stays logged in (that is why the session is kept)
-    assert client.get("/api/admin/overview", headers=admin_headers).status_code == 200
-    assert task["id"] > 0
+    assert client.get(f'/api/admin/tasks/{task["id"]}',headers=admin_headers).status_code == 200
 
 
 # ---------------------------------------------------------------- external photos dir

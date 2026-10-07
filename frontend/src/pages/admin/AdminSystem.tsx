@@ -161,73 +161,8 @@ export default function AdminSystem() {
             >
               {t('admin.system.cleanSessions')}
             </button>
-            <button
-              type="button"
-              className="btn btn-ghost sm"
-              onClick={async () => {
-                try {
-                  const result = await api.reveal({ scope: 'data' })
-                  setToast(t('admin.system.revealed', { path: result.path }))
-                } catch (err) {
-                  setToast(String(err))
-                }
-                window.setTimeout(() => setToast(null), 4000)
-              }}
-            >
-              📂 {t('admin.system.openDataDir')}
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost sm"
-              onClick={async () => {
-                try {
-                  const result = await api.reveal({ scope: 'uploads' })
-                  setToast(t('admin.system.revealed', { path: result.path }))
-                } catch (err) {
-                  setToast(String(err))
-                }
-                window.setTimeout(() => setToast(null), 4000)
-              }}
-            >
-              📂 {t('admin.system.openUploadDir')}
-            </button>
           </div>
-          <p className="small muted">{t('admin.system.revealHint')}</p>
-
-          <div className="divider" />
-
-          <h4 className="warn-text">{t('admin.system.dangerZone')}</h4>
-          <p className="small muted">{t('admin.system.resetHint')}</p>
-          <button
-            type="button"
-            className="btn btn-danger sm"
-            onClick={async () => {
-              const typed = window.prompt(t('admin.system.resetPrompt'))
-              if (typed === null) return
-              if (typed.trim().toUpperCase() !== 'DELETE') {
-                setToast(t('admin.system.resetAborted'))
-                window.setTimeout(() => setToast(null), 3000)
-                return
-              }
-              if (!window.confirm(t('admin.system.resetConfirmAgain'))) return
-              try {
-                const result = await api.resetAll('DELETE')
-                setToast(
-                  t('admin.system.resetDone', {
-                    tasks: result.tasks,
-                    photos: result.photos,
-                    runs: result.runs,
-                  }),
-                )
-                await reload()
-              } catch (err) {
-                setToast(String(err))
-              }
-              window.setTimeout(() => setToast(null), 6000)
-            }}
-          >
-            🗑 {t('admin.system.resetAll')}
-          </button>
+          <p className="small muted">管理员只能管理自己的任务。请在任务页面删除任务；全局清空已关闭，账号 ID 和历史信息永久保留。</p>
         </Card>
       </div>
 

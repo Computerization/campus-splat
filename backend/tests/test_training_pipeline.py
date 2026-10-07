@@ -39,32 +39,25 @@ def _create_task_with_photos(
         for cp_name in checkpoint_names
     ]
 
-    join = client.post(
-        "/api/auth/volunteer/join",
-        json={"access_code": task["access_code"], "nickname": "测试同学"},
-    ).json()
-    headers = {"Authorization": f"Bearer {join['token']}"}
-
+    joined = client.post('/api/auth/volunteer/register', json={
+        'username': f'训练同学{task["id"]}', 'password':'shared'}).json()
+    headers = {'Authorization': f'Bearer {joined["token"]}'}
+    client.post(f'/api/volunteer/tasks/{task["id"]}/claim', headers=headers)
     seed = abs(hash(name)) % 5000
+    files = []
+    manifest = []
     for checkpoint in checkpoints:
         for index in range(photos_each):
             seed += 13
-            response = client.post(
-                f"/api/volunteer/checkpoints/{checkpoint['id']}/photos",
-                files=[
-                    (
-                        "files",
-                        (
-                            f"p{seed}.jpg",
-                            jpeg_bytes(make_textured_image(2000, 1500, seed=seed), quality=80),
-                            "image/jpeg",
-                        ),
-                    )
-                ],
-                headers=headers,
-            )
-            assert response.status_code == 200, response.text
-            assert response.json()["checkpoint"]["uploaded_usable"] == index + 1, response.text
+            manifest.append({'checkpoint_id':checkpoint['id']})
+            files.append(('files',(f'p{seed}.jpg',jpeg_bytes(make_textured_image(2000,1500,seed=seed),quality=80),'image/jpeg')))
+    response = client.post(f'/api/volunteer/tasks/{task["id"]}/submit', headers=headers,
+        data={'manifest':json.dumps(manifest)}, files=files)
+    assert response.status_code == 200, response.text
+    assignment_id = response.json()['assignment']['id']
+    accepted = client.post(f'/api/admin/submissions/{assignment_id}/review', headers=admin_headers,
+        json={'decision':'accept'})
+    assert accepted.status_code == 200, accepted.text
     return task, checkpoints
 
 

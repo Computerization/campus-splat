@@ -12,7 +12,9 @@ import AdminTaskDetail from './pages/admin/AdminTaskDetail'
 import AdminTasks from './pages/admin/AdminTasks'
 import AdminTraining from './pages/admin/AdminTraining'
 import VolunteerBoard from './pages/volunteer/VolunteerBoard'
-import VolunteerCheckpoint from './pages/volunteer/VolunteerCheckpoint'
+import VolunteerTask from './pages/volunteer/VolunteerTask'
+import AdminVolunteers from './pages/admin/AdminVolunteers'
+import AdminSubmissions from './pages/admin/AdminSubmissions'
 import VolunteerJoin from './pages/volunteer/VolunteerJoin'
 import VolunteerMine from './pages/volunteer/VolunteerMine'
 
@@ -29,11 +31,11 @@ function RequireAdmin({ children }: { children: JSX.Element }) {
 }
 
 function RequireVolunteer({ children }: { children: JSX.Element }) {
-  const { session, ready, isAdmin } = useAuth()
+  const { ready, isVolunteer } = useAuth()
   const location = useLocation()
   if (!ready) return <Spinner />
   // Admins may also browse the volunteer UI, which is handy for debugging
-  if (!session || (!isAdmin && !session.task_id)) {
+  if (!isVolunteer) {
     return <Navigate to="/join" state={{ from: location.pathname }} replace />
   }
   return children
@@ -55,10 +57,10 @@ export default function App() {
         }
       />
       <Route
-        path="/v/cp/:id"
+        path="/v/tasks/:id"
         element={
           <RequireVolunteer>
-            <VolunteerCheckpoint />
+            <VolunteerTask />
           </RequireVolunteer>
         }
       />
@@ -84,6 +86,8 @@ export default function App() {
         <Route index element={<AdminOverview />} />
         <Route path="tasks" element={<AdminTasks />} />
         <Route path="tasks/:id" element={<AdminTaskDetail />} />
+        <Route path="volunteers" element={<AdminVolunteers />} />
+        <Route path="submissions" element={<AdminSubmissions />} />
         <Route path="photos" element={<AdminPhotos />} />
         <Route path="training" element={<AdminTraining />} />
         <Route

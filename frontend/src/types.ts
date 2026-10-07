@@ -7,6 +7,8 @@ export type CheckpointStatus = 'pending' | 'in_progress' | 'done' | 'blocked'
 export type TrainingStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface Session {
+  admin_id: number | null
+  volunteer_id: string | null
   token: string
   role: Role
   nickname: string | null
@@ -15,6 +17,7 @@ export interface Session {
 }
 
 export interface Task {
+  owner_admin_id: number
   id: number
   name: string
   kind: 'indoor' | 'outdoor'
@@ -28,6 +31,7 @@ export interface Task {
 }
 
 export interface TaskProgress {
+  active_volunteers: string[]
   task: Task
   checkpoint_total: number
   checkpoint_done: number

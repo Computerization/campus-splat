@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { UNAUTHORIZED_EVENT, api, clearToken, getToken, setToken } from './api'
+import { UNAUTHORIZED_EVENT, api, clearToken, getToken, setToken, request } from './api'
 import type { Session } from './types'
 
 interface AuthValue {
@@ -17,6 +17,7 @@ interface AuthValue {
   isVolunteer: boolean
   adminLogin: (password: string) => Promise<Session>
   volunteerJoin: (accessCode: string, nickname: string) => Promise<Session>
+  volunteerLogin: (username: string, password: string, register?: boolean) => Promise<Session>
   logout: () => Promise<void>
 }
 
@@ -67,6 +68,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return result
   }, [])
 
+  const volunteerLogin = useCallback(async (username: string, password: string, register = false) => {
+    const result = await request<Session>(`/api/auth/volunteer/${register ? 'register' : 'login'}`, {
+      method: 'POST', body: JSON.stringify({ username, password }),
+    })
+    setToken(result.token)
+    setSession(result)
+    return result
+  }, [])
+
   const logout = useCallback(async () => {
     try {
       await api.logout()
@@ -85,9 +95,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isVolunteer: session?.role === 'volunteer',
       adminLogin,
       volunteerJoin,
+      volunteerLogin,
       logout,
     }),
-    [session, ready, adminLogin, volunteerJoin, logout],
+    [session, ready, adminLogin, volunteerJoin, volunteerLogin, logout],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

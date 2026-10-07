@@ -20,6 +20,7 @@ cd /d "%~dp0"
 
 where uv >nul 2>nul
 if errorlevel 1 (
+    if exist ".venv\Scripts\python.exe" goto local_python
     echo.
     echo [ERROR] "uv" was not found in PATH.
     echo.
@@ -52,3 +53,9 @@ if errorlevel 1 (
     echo.
     pause
 )
+exit /b
+
+:local_python
+echo Starting with the existing project Python environment...
+".venv\Scripts\python.exe" scripts\serve.py %*
+if errorlevel 1 pause

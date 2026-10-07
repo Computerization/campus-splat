@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
+import secrets
 import sys
 import time
 from pathlib import Path
@@ -39,6 +41,9 @@ except Exception:  # pragma: no cover
 DEMO_PREFIX = "演示 · "
 # Endpoints this script needs; their absence means the server runs old code
 REQUIRED_PATHS = (
+    "/api/auth/volunteer/register",
+    "/api/volunteer/tasks/{task_id}/submit",
+    "/api/admin/submissions/{assignment_id}/review",
     "/api/admin/training/preflight",
     "/api/admin/training/{run_id}/preview",
     "/api/admin/training/{run_id}/transforms",
@@ -174,26 +179,28 @@ def make_task(
         for checkpoint_name in checkpoint_names
     ]
 
-    join = client.post(
-        "/api/auth/volunteer/join",
-        json={"access_code": task["access_code"], "nickname": "演示数据"},
-    ).json()
-    volunteer_headers = {"Authorization": f"Bearer {join['token']}"}
-
-    uploaded = 0
+    join = client.post('/api/auth/volunteer/register', json={
+        'username': f'演示志愿者{secrets.token_hex(4)}', 'password':secrets.token_urlsafe(12)})
+    join.raise_for_status()
+    volunteer_headers = {'Authorization': f'Bearer {join.json()["token"]}'}
+    claim = client.post(f'/api/volunteer/tasks/{task["id"]}/claim', headers=volunteer_headers)
+    claim.raise_for_status()
+    files = []
+    manifest = []
     for checkpoint in checkpoints:
         for _ in range(photos_each):
             seed += 13
-            response = client.post(
-                f"/api/volunteer/checkpoints/{checkpoint['id']}/photos",
-                files=[("files", (f"demo{seed}.jpg", make_photo(seed), "image/jpeg"))],
-                headers=volunteer_headers,
-            )
-            result = response.json()["results"][0]
-            if response.status_code != 200 or not result.get("ok"):
-                print(f"  上传失败：{response.status_code} {result}")
-                raise RuntimeError("上传失败")
-            uploaded += 1
+            files.append(('files',(f'demo{seed}.jpg', make_photo(seed), 'image/jpeg')))
+            manifest.append({'checkpoint_id':checkpoint['id']})
+    response = client.post(f'/api/volunteer/tasks/{task["id"]}/submit', headers=volunteer_headers,
+        data={'manifest':json.dumps(manifest)}, files=files)
+    response.raise_for_status()
+    assignment_id = response.json()['assignment']['id']
+    accepted = client.post(f'/api/admin/submissions/{assignment_id}/review', headers=headers,
+        json={'decision':'accept'})
+    accepted.raise_for_status()
+    client.delete('/api/auth/volunteer/account', headers=volunteer_headers).raise_for_status()
+    uploaded = len(files)
     print(f"  {task['name']}：{len(checkpoints)} 个点位，上传 {uploaded} 张（全部可用）")
     return task
 
@@ -295,8 +302,8 @@ def main() -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="已经运行中的服务地址")
     parser.add_argument(
         "--password",
-        default=config.ADMIN_PASSWORD,
-        help="管理员密码（默认读 .env / 环境变量，再退回代码里的默认值）",
+        default="admin001",
+        help="固定管理员密码（默认 admin001）",
     )
     parser.add_argument("--photos-per-checkpoint", type=int, default=3, help="每个点位生成几张")
     parser.add_argument("--skip-outdoor", action="store_true", help="只造室内任务")

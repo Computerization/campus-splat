@@ -103,21 +103,6 @@ def ensure_frontend(skip: bool) -> bool:
     return DIST_INDEX.exists()
 
 
-def using_default_password() -> bool:
-    """True while the publicly-known default password is still in use."""
-    value = os.environ.get("THREEDGS_ADMIN_PASSWORD")
-    if not value:
-        env_file = ROOT / ".env"
-        if env_file.exists():
-            try:
-                from dotenv import dotenv_values
-
-                value = dotenv_values(env_file).get("THREEDGS_ADMIN_PASSWORD") or ""
-            except Exception:
-                value = ""
-    return (value or "admin123").strip() == "admin123"
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="校园 3DGS 采集平台启动器")
     parser.add_argument("--port", type=int, default=8000, help="监听端口，默认 8000")
@@ -127,7 +112,7 @@ def main() -> int:
     args = parser.parse_args()
 
     print("=== 校园 3DGS 采集平台 ===")
-    print("  [1/4] Python 环境：uv")
+    print(f"  [1/4] Python 环境：{sys.executable}")
 
     ensure_frontend(args.skip_build)
 
@@ -141,12 +126,8 @@ def main() -> int:
     print(f"        本机自测：http://127.0.0.1:{args.port}")
     print(f"        管理端：http://<上面的IP>:{args.port}/admin")
 
-    if using_default_password():
-        print()
-        print("  [!] 正在使用默认管理密码 —— 它随代码一起公开在 GitHub 上！")
-        print("      上线前请务必改掉，两种方式任选：")
-        print("        · 复制 .env.example 为 .env，改里面的 THREEDGS_ADMIN_PASSWORD")
-        print("        · 或设置系统环境变量 THREEDGS_ADMIN_PASSWORD")
+    print("        管理员密码：admin001 至 admin005（固定账号，不能注销）")
+    print("        志愿者：注册真实姓名与密码，然后登录接取任务")
 
     print()
     print("  [4/4] 启动服务（按 Ctrl+C 停止）…")

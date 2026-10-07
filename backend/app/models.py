@@ -38,6 +38,34 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
 
 
+class VolunteerAccount(Base):
+    __tablename__ = "volunteer_accounts"
+    __table_args__ = {"sqlite_autoincrement": True}
+    # SQLite AUTOINCREMENT guarantees archived IDs are never reused. Public ID = id - 1.
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(64))
+    active_username: Mapped[str | None] = mapped_column(String(64), unique=True)
+    password: Mapped[str] = mapped_column(String(128))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class TaskAssignment(Base):
+    __tablename__ = "task_assignments"
+    __table_args__ = (UniqueConstraint("task_id", "volunteer_id"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id"), index=True)
+    volunteer_id: Mapped[int] = mapped_column(ForeignKey("volunteer_accounts.id"), index=True)
+    status: Mapped[str] = mapped_column(String(24), default="in_progress", index=True)
+    attempt: Mapped[int] = mapped_column(Integer, default=1)
+    review_note: Mapped[str | None] = mapped_column(Text)
+    submitted_manifest: Mapped[list | None] = mapped_column(JSON)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AuthSession(Base):
     """Login session. Admins and volunteers share this table, split by `role`."""
 
@@ -46,6 +74,8 @@ class AuthSession(Base):
     token: Mapped[str] = mapped_column(String(64), primary_key=True)
     role: Mapped[str] = mapped_column(String(16), index=True)  # admin | volunteer
     nickname: Mapped[str | None] = mapped_column(String(64))
+    admin_id: Mapped[int | None] = mapped_column(Integer)
+    volunteer_id: Mapped[int | None] = mapped_column(Integer, index=True)
     # Volunteer sessions are bound to one task
     task_id: Mapped[int | None] = mapped_column(
         ForeignKey("tasks.id", ondelete="CASCADE"), index=True
@@ -63,6 +93,7 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_admin_id: Mapped[int] = mapped_column(Integer, default=1, index=True)
     name: Mapped[str] = mapped_column(String(128))
     kind: Mapped[str] = mapped_column(String(16), default="indoor", index=True)
     # indoor (volunteers' phones) | outdoor (drone)
@@ -146,6 +177,8 @@ class Photo(Base):
         ForeignKey("checkpoints.id", ondelete="SET NULL"), index=True
     )
     session_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    volunteer_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    assignment_id: Mapped[int | None] = mapped_column(Integer, index=True)
     nickname: Mapped[str | None] = mapped_column(String(64))
 
     original_filename: Mapped[str] = mapped_column(String(255))

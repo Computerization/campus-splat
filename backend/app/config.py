@@ -46,11 +46,10 @@ FRONTEND_DIST = Path(
     os.environ.get("THREEDGS_FRONTEND_DIST") or (BASE_DIR / "frontend" / "dist")
 ).resolve()
 
-# The default password is public in this repo, so it must be changed before the
-# site is exposed. serve.py warns loudly while this flag is true.
-DEFAULT_ADMIN_PASSWORD = "admin123"
-ADMIN_PASSWORD = os.environ.get("THREEDGS_ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
-USING_DEFAULT_PASSWORD = ADMIN_PASSWORD == DEFAULT_ADMIN_PASSWORD
+# Five permanent administrator identities; password-only login.
+ADMIN_PASSWORDS = {i: f"admin{i:03d}" for i in range(1, 6)}
+# CLI helpers default to administrator 001.
+ADMIN_PASSWORD = ADMIN_PASSWORDS[1]
 
 # Rate limit for admin login: an IP is locked out after too many failures.
 LOGIN_MAX_FAILURES = int(os.environ.get("THREEDGS_LOGIN_MAX_FAILURES", "8"))

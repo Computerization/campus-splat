@@ -71,8 +71,16 @@ def client():
         yield test_client
 
 
+@pytest.fixture(autouse=True)
+def isolated_login_limiter():
+    from app.routers.auth import _failures
+    _failures.clear()
+    yield
+    _failures.clear()
+
+
 @pytest.fixture(scope="session")
 def admin_headers(client: TestClient) -> dict:
-    response = client.post("/api/auth/admin/login", json={"password": "test-password"})
+    response = client.post("/api/auth/admin/login", json={"password": "admin001"})
     assert response.status_code == 200, response.text
     return {"Authorization": f"Bearer {response.json()['token']}"}

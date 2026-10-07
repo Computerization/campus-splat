@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import config, storage
-from ..models import Checkpoint, Photo, Task, TrainingRun
+from ..models import Checkpoint, Photo, Task, TrainingRun, TaskAssignment, VolunteerAccount
 from ..schemas import (
     CheckpointProgressOut,
     OverviewOut,
@@ -144,13 +144,18 @@ def build_task_progress(
         photo_warning=agg["warning"],
         photo_rejected=agg["rejected"],
         contributors=sorted(contributors),
+        active_volunteers=list(db.scalars(select(VolunteerAccount.username).join(TaskAssignment,
+            TaskAssignment.volunteer_id == VolunteerAccount.id).where(TaskAssignment.task_id == task.id,
+            TaskAssignment.status.in_(('in_progress', 'submitted'))))),
         progress_percent=percent,
         last_upload_at=last_upload,
     )
 
 
-def build_overview(db: OrmSession, *, include_archived: bool = False) -> OverviewOut:
-    query = select(Task).order_by(Task.created_at.desc())
+def build_overview(db: OrmSession, *, include_archived: bool = False, owner_admin_id: int | None = None) -> OverviewOut:
+    query = select(Task).where(Task.status != 'deleted').order_by(Task.created_at.desc())
+    if owner_admin_id is not None:
+        query = query.where(Task.owner_admin_id == owner_admin_id)
     if not include_archived:
         query = query.where(Task.status != "archived")
     tasks = db.execute(query).scalars().all()
@@ -159,7 +164,7 @@ def build_overview(db: OrmSession, *, include_archived: bool = False) -> Overvie
     task_progress = [build_task_progress(db, t, checkpoint_map=checkpoint_map) for t in tasks]
 
     training = db.execute(
-        select(TrainingRun).order_by(TrainingRun.created_at.desc()).limit(20)
+        select(TrainingRun).where(TrainingRun.task_id.in_([t.id for t in tasks])).order_by(TrainingRun.created_at.desc()).limit(20)
     ).scalars().all()
 
     totals = {

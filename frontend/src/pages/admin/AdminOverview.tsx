@@ -20,7 +20,7 @@ export default function AdminOverview() {
   const { relativeTime } = useTimeFormat()
   const { data, error, loading, reload, silentRefresh } = useAsync(() => api.overview(), [])
   // The admin console is watched live, so refresh every 10s
-  usePolling(silentRefresh, 10_000, Boolean(data))
+  usePolling(silentRefresh, 2000, Boolean(data))
 
   if (loading && !data) return <Spinner />
   if (error && !data) return <ErrorBox error={error} onRetry={reload} />
@@ -32,9 +32,9 @@ export default function AdminOverview() {
     <>
       <div className="page-head">
         <div>
-          <h1>{t('admin.overview.title')}</h1>
+          <h1>我的任务总览</h1>
           <div className="sub">
-            {t('admin.overview.autoRefresh')} ·{' '}
+            每 2 秒自动刷新 ·{' '}
             {t('admin.overview.lastRefresh', { time: new Date().toLocaleTimeString() })}
           </div>
         </div>
@@ -194,8 +194,7 @@ export default function AdminOverview() {
                         {t('common.peopleCount', { count: item.contributors.length })}
                       </span>
                       <div className="small muted">
-                        {item.contributors.slice(0, 3).join(t('common.listSeparator'))}
-                        {item.contributors.length > 3 && ' …'}
+                        正在进行：{item.active_volunteers.join(t('common.listSeparator')) || '暂无志愿者'}
                       </div>
                     </td>
                     <td className="small muted">{relativeTime(item.last_upload_at)}</td>

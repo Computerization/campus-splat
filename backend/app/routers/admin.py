@@ -10,6 +10,7 @@ import csv
 import io
 import json
 import random
+import secrets
 import shutil
 import string
 import subprocess
@@ -25,7 +26,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from .. import config, storage
 from ..database import get_db
-from ..models import AuthSession, Checkpoint, Photo, Task, TrainingBlock, TrainingRun, utcnow
+from ..models import AuthSession, Checkpoint, Photo, Task, TaskAssignment, TrainingBlock, TrainingRun, utcnow
 from ..quality import HEIF_SUPPORTED
 from ..quality.metrics import OPENCV_AVAILABLE
 from ..schemas import (
@@ -52,21 +53,23 @@ from ..schemas import (
     TrainingRunDetailOut,
     TrainingRunOut,
 )
-from ..security import prune_expired_sessions, require_admin
+from ..security import prune_expired_sessions, require_admin, admin_scope
 from ..services import splat, stats, sysinfo, training
 from ..services.training import manager, queue_depth
 
-router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)])
+router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(admin_scope)])
 
 _CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/I
 
 
-def _new_access_code(db: OrmSession, length: int = 6) -> str:
-    for _ in range(20):
-        code = "".join(random.choice(_CODE_ALPHABET) for _ in range(length))
+def _new_access_code(db: OrmSession, length: int = 5) -> str:
+    for _ in range(100):
+        code = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(length))
+        if not any(c.isdigit() for c in code) or not any(c.isalpha() for c in code):
+            continue
         if not db.execute(select(Task.id).where(Task.access_code == code)).first():
             return code
-    return "".join(random.choice(_CODE_ALPHABET) for _ in range(10))
+    raise HTTPException(503, '任务码分配失败，请重试')
 
 
 def _photo_out(photo: Photo, session: AuthSession, checkpoint_name: str | None = None) -> PhotoOut:
@@ -87,9 +90,10 @@ def _photo_out(photo: Photo, session: AuthSession, checkpoint_name: str | None =
 @router.get("/overview")
 def overview(
     include_archived: bool = Query(default=False),
+    session: AuthSession = Depends(require_admin),
     db: OrmSession = Depends(get_db),
 ) -> dict:
-    return stats.build_overview(db, include_archived=include_archived).model_dump(mode="json")
+    return stats.build_overview(db, include_archived=include_archived, owner_admin_id=session.admin_id).model_dump(mode="json")
 
 
 @router.get("/system")
@@ -128,9 +132,10 @@ def prune_sessions(db: OrmSession = Depends(get_db)) -> dict:
 @router.get("/tasks", response_model=list[TaskProgressOut])
 def list_tasks(
     include_archived: bool = Query(default=True),
+    session: AuthSession = Depends(require_admin),
     db: OrmSession = Depends(get_db),
 ) -> list[TaskProgressOut]:
-    query = select(Task).order_by(Task.created_at.desc())
+    query = select(Task).where(Task.owner_admin_id == session.admin_id, Task.status != 'deleted').order_by(Task.created_at.desc(), Task.id.desc())
     if not include_archived:
         query = query.where(Task.status != "archived")
     tasks = db.execute(query).scalars().all()
@@ -139,12 +144,17 @@ def list_tasks(
 
 
 @router.post("/tasks", response_model=TaskOut, status_code=status.HTTP_201_CREATED)
-def create_task(payload: TaskCreateIn, db: OrmSession = Depends(get_db)) -> TaskOut:
-    code = (payload.access_code or "").strip().upper() or _new_access_code(db)
+def create_task(payload: TaskCreateIn, db: OrmSession = Depends(get_db), session: AuthSession = Depends(require_admin)) -> TaskOut:
+    from .workflow import write_lock
+    write_lock(db)
+    if payload.access_code is not None:
+        raise HTTPException(400, '任务码由系统自动生成，不能手动设置')
+    code = _new_access_code(db)
     if db.execute(select(Task.id).where(Task.access_code == code)).first():
         raise HTTPException(status.HTTP_409_CONFLICT, f"访问码 {code} 已被占用")
 
     task = Task(
+        owner_admin_id=session.admin_id,
         name=payload.name.strip(),
         kind=payload.kind,
         description=payload.description,
@@ -187,6 +197,10 @@ def patch_task(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "任务不存在")
 
     data = payload.model_dump(exclude_unset=True)
+    if 'access_code' in data:
+        raise HTTPException(400, '任务码绑定任务后不可修改')
+    if 'name' in data and (data['name'] is None or not data['name'].strip()):
+        raise HTTPException(400, '任务名称不能为空')
     if "access_code" in data and data["access_code"]:
         code = data["access_code"].strip().upper()
         clash = db.execute(
@@ -227,7 +241,10 @@ def delete_task(
             cp.reference_image for cp in task.checkpoints if cp.reference_image
         ]
 
-    db.delete(task)
+    # Keep account and accepted-submission history even after the task disappears.
+    task.status = 'deleted'
+    for assignment in db.scalars(select(TaskAssignment).where(TaskAssignment.task_id == task.id, TaskAssignment.status.in_(('in_progress', 'submitted')))):
+        assignment.status = 'task_deleted'
     db.commit()
 
     for rel in rel_paths:
@@ -421,7 +438,7 @@ def list_photos(
     session: AuthSession = Depends(require_admin),
     db: OrmSession = Depends(get_db),
 ) -> PhotoPage:
-    conditions = []
+    conditions = [Photo.task_id.in_(select(Task.id).where(Task.owner_admin_id == session.admin_id, Task.status != 'deleted'))]
     if task_id is not None:
         conditions.append(Photo.task_id == task_id)
     if checkpoint_id is not None:
@@ -596,10 +613,11 @@ def _run_detail(run: TrainingRun) -> TrainingRunDetailOut:
 @router.get("/training", response_model=list[TrainingRunOut])
 def list_training_runs(
     limit: int = Query(default=30, ge=1, le=200),
+    session: AuthSession = Depends(require_admin),
     db: OrmSession = Depends(get_db),
 ) -> list[TrainingRunOut]:
     runs = db.execute(
-        select(TrainingRun).order_by(TrainingRun.created_at.desc()).limit(limit)
+        select(TrainingRun).where(TrainingRun.task_id.in_(select(Task.id).where(Task.owner_admin_id == session.admin_id, Task.status != 'deleted'))).order_by(TrainingRun.created_at.desc()).limit(limit)
     ).scalars().all()
     manager.start()  # wake the dispatcher thread as soon as someone looks
     return [stats.to_training_out(run) for run in runs]

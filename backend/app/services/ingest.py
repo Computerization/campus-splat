@@ -38,6 +38,8 @@ def ingest_upload(
     checkpoint: Checkpoint | None,
     session: AuthSession | None,
     upload: UploadFile,
+    assignment_id: int | None = None,
+    commit: bool = True,
 ) -> UploadResultOut:
     filename = (upload.filename or "unnamed").strip() or "unnamed"
 
@@ -111,7 +113,7 @@ def ingest_upload(
     score = max(0, min(100, analysis.score - (10 if duplicate_id is not None else 0)))
 
     # 5. thumbnail / preview
-    prefix = saved.sha256[:16]
+    prefix = __import__('pathlib').Path(saved.rel_path).stem
     thumb_rel, preview_rel = storage.make_derivatives(saved.rel_path, prefix=prefix)
 
     exif = analysis.exif
@@ -119,6 +121,8 @@ def ingest_upload(
         task_id=task.id,
         checkpoint_id=checkpoint.id if checkpoint else None,
         session_id=session.token if session else None,
+        volunteer_id=session.volunteer_id if session else None,
+        assignment_id=assignment_id,
         nickname=session.nickname if session else None,
         original_filename=filename[:255],
         stored_path=saved.rel_path,
@@ -151,8 +155,10 @@ def ingest_upload(
             advice="\n".join(advice_parts),
         )
     )
-    db.commit()
-    db.refresh(photo)
+    db.flush()
+    if commit:
+        db.commit()
+        db.refresh(photo)
 
     return UploadResultOut(
         ok=status != "rejected",

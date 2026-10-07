@@ -38,7 +38,7 @@ export default function AdminLogin() {
         </div>
 
         <h1>{t('admin.login.title')}</h1>
-        <p className="sub">{t('admin.login.subtitle')}</p>
+        <p className="sub">输入固定管理员密码登录，各管理员独立管理自己的任务。</p>
 
         <form onSubmit={submit}>
           <label className="field">

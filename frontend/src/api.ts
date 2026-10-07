@@ -76,7 +76,7 @@ function msg(key: keyof (typeof MESSAGES)['zh']): string {
 
 export const UNAUTHORIZED_EVENT = 'threedgs:unauthorized'
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers)
   const token = getToken()
   if (token) headers.set('Authorization', `Bearer ${token}`)

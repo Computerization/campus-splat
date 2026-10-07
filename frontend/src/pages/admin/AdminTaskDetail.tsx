@@ -108,6 +108,7 @@ export default function AdminTaskDetail() {
   const [taskEditOpen, setTaskEditOpen] = useState(false)
   const [taskName, setTaskName] = useState('')
   const [taskLocation, setTaskLocation] = useState('')
+  const [taskDescription, setTaskDescription] = useState('')
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState<unknown>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -196,6 +197,7 @@ export default function AdminTaskDetail() {
       await api.patchTask(taskId, {
         name: taskName.trim() || undefined,
         location_hint: taskLocation.trim(),
+        description: taskDescription.trim(),
       })
       setTaskEditOpen(false)
       await refreshAll()
@@ -206,7 +208,7 @@ export default function AdminTaskDetail() {
     }
   }
 
-  const shareLink = `${window.location.origin}/join?code=${task.task.access_code}`
+  const shareLink = `${window.location.origin}/v/tasks/${task.task.id}`
   const separator = t('common.listSeparator')
   const suggestedShots = cpForm
     ? suggestShotCount(cpForm.length_m, cpForm.width_m, cpForm.room_height_m)
@@ -302,6 +304,7 @@ export default function AdminTaskDetail() {
             onClick={() => {
               setTaskName(task.task.name)
               setTaskLocation(task.task.location_hint ?? '')
+              setTaskDescription(task.task.description ?? '')
               setTaskEditOpen(true)
             }}
           >
@@ -722,6 +725,7 @@ export default function AdminTaskDetail() {
             onChange={(event) => setTaskLocation(event.target.value)}
           />
         </label>
+        <label className="field"><span>任务描述</span><textarea value={taskDescription} onChange={event => setTaskDescription(event.target.value)} /></label>
       </Modal>
 
       {toast && <Toast text={toast} />}

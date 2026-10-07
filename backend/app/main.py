@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from . import config
 from .database import init_db
 from .quality import HEIF_SUPPORTED
-from .routers import admin, auth, media, volunteer
+from .routers import admin, auth, media, volunteer, workflow
 from .services.training import manager as training_manager
 
 logger = logging.getLogger("threedgs")
@@ -58,6 +58,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(volunteer.router)
+app.include_router(workflow.router)
 app.include_router(media.router)
 
 

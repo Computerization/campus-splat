@@ -45,6 +45,8 @@ class SessionOut(BaseModel):
     nickname: str | None = None
     task_id: int | None = None
     task_name: str | None = None
+    admin_id: int | None = None
+    volunteer_id: str | None = None
 
 
 # ---------------------------------------------------------------- tasks
@@ -69,6 +71,7 @@ class TaskPatchIn(BaseModel):
 
 class TaskOut(ORMModel):
     id: int
+    owner_admin_id: int = 1
     name: str
     kind: str
     description: str | None
@@ -253,6 +256,7 @@ class TaskProgressOut(BaseModel):
     photo_warning: int = 0
     photo_rejected: int = 0
     contributors: list[str] = Field(default_factory=list)
+    active_volunteers: list[str] = Field(default_factory=list)
     progress_percent: float = 0.0
     last_upload_at: datetime | None = None
 

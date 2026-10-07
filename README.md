@@ -1,6 +1,6 @@
 # School 3DGS Capture Platform
 
-> My CAS project as vice president of the computerization club. The goal is to build a 3D Gaussian Splatting model of the **entire school** and enter it in [Explorer Global](https://tryout.explorerglobal.cn/). Buildings are planned to be shot by drone, and the interiors are shot by student volunteers with their phones. Collecting that many indoor photos by hand doesn't scale, so this web app exists: volunteers upload photos and get told **immediately** whether each photo is usable — nobody finds out three weeks later that a whole floor has to be re-shot.
+> My CAS project as vice president of the computerization club. The goal is to build a 3D Gaussian Splatting model of the **entire school** and enter it in [Explorer Global](https://tryout.explorerglobal.cn/). Buildings are planned to be shot by drone, and the interiors are shot by student volunteers with their phones. Collecting that many indoor photos by hand doesn't scale, so this web app exists: volunteers upload photos and get per-photo quality results when submitting their complete task — nobody finds out three weeks later that a whole floor has to be re-shot.
 
 The whole thing is designed to run on one ordinary desktop in the club room (i5-12400F + 32 GB + RTX 3090), which also does the reconstruction work.
 
@@ -16,9 +16,7 @@ The whole thing is designed to run on one ordinary desktop in the club room (i5-
     - [Windows](#windows)
     - [macOS / Linux](#macos--linux)
     - [Manual (any platform)](#manual-any-platform)
-  - [Setting the admin password](#setting-the-admin-password)
-    - [Option 1 — a `.env` file (recommended)](#option-1--a-env-file-recommended)
-    - [Option 2 — an environment variable](#option-2--an-environment-variable)
+  - [Fixed administrator accounts](#fixed-administrator-accounts)
   - [How volunteers and admins use it](#how-volunteers-and-admins-use-it)
     - [Volunteers — open `/v` on a phone](#volunteers--open-v-on-a-phone)
     - [Admins — open `/admin` on the club-room computer](#admins--open-admin-on-the-club-room-computer)
@@ -31,8 +29,8 @@ The whole thing is designed to run on one ordinary desktop in the club room (i5-
 
 | | Volunteers (phone, `/v`) | Admins (desktop, `/admin`) |
 |---|---|---|
-| **How they get in** | Task access code + their name, no account | Admin password |
-| **What they see** | Where to go, how to shoot, how many photos, instant per-photo feedback | Global progress, checkpoint planning, photo review, training jobs, live server metrics |
+| **How they get in** | Real-name account + password | One of five fixed admin passwords |
+| **What they see** | Where to go, how to shoot, how many photos, instant per-photo feedback | Global progress, checkpoint planning, photo review, submission decisions, volunteer accounts, training jobs, live server metrics |
 
 Everything runs behind a single port: the FastAPI backend also serves the built React frontend, so volunteers just open `http://<lan-ip>:8000` on their phones.
 
@@ -88,45 +86,18 @@ Then open:
 
 Volunteers on the same network use the LAN address the launcher prints, e.g. `http://192.168.1.25:8000`.
 
-## Setting the admin password
+## Fixed administrator accounts
 
-**The default password is `admin123`, and it is public in this repository** — change it before anyone else can reach the site. Pick either method below.
-
-### Option 1 — a `.env` file (recommended)
-
-```bash
-cp .env.example .env        # Windows PowerShell: copy .env.example .env
-```
-
-Then open `.env` in any text editor and set the password:
-
-```
-THREEDGS_ADMIN_PASSWORD=your-own-password
-```
-
-Restart the server. That's it — `.env` is git-ignored, so the password stays on that machine and never ends up on GitHub.
-
-### Option 2 — an environment variable
-
-Windows, permanent (reopen the terminal afterwards):
-
-```powershell
-setx THREEDGS_ADMIN_PASSWORD "your-own-password"
-```
-
-Windows, current session only:
-
-```powershell
-$env:THREEDGS_ADMIN_PASSWORD = "your-own-password"
-```
-
-macOS / Linux (append to `~/.bashrc` or `~/.zshrc` to make it permanent):
-
-```bash
-export THREEDGS_ADMIN_PASSWORD="your-own-password"
-```
-
-Precedence: **process environment variable > `.env` > the built-in default**.
+Five permanent administrator identities log in using only their assigned password.
+Obtain the password for your administrator identity from the platform maintainer.
+They cannot be deleted. Signing out ends only the current session.
+Each administrator owns the tasks they create and can edit/delete only their own
+ tasks, checkpoints, photos, training runs and submissions. Existing tasks migrate
+ to administrator 001. Task codes are generated automatically: five random letters
+ and digits, unique and immutable. Newest tasks appear first, including in the sidebar.
+ All five administrators can list active volunteer accounts and change their
+ usernames/passwords or archive them. As requested, this list includes current
+ passwords; these recoverable credentials are stored with the account ID.
 
 ## Where the data lives, and starting over
 
@@ -141,32 +112,56 @@ With an external photo folder the database stores absolute paths, so moving that
 
 **Opening folders:** the admin console has 📂 buttons (System page: data / photo folders; task detail: that task's photos; photo review: show the selected photo). They open the file manager **on the machine running the server** — clicking from your laptop still opens it on the server, not on your laptop.
 
-**Starting over:** the System page has a red *清空全部数据 / Delete all data* button (type `DELETE` to confirm) — it removes every task, checkpoint, photo and training run, files included, while keeping your admin login. Same thing from the command line:
-
-```powershell
-uv run python backend\scripts\reset_data.py           # shows what would go, then asks
-uv run python backend\scripts\reset_data.py --yes     # no prompt
-```
+**Deleting tasks:** use the task page. Global reset is disabled for all fixed
+administrators so other administrators' tasks and permanent volunteer IDs cannot
+be erased. Deleted tasks release unfinished task slots; account and assignment
+records remain in the database. Original media is removed when requested.
 
 ## How volunteers and admins use it
 
-### Volunteers — open `/v` on a phone
+### Volunteers — open `/join` or `/v`
 
-1. Enter the **task access code** your teacher/classmate gave you, plus your name
-2. The board lists every checkpoint and shows which ones are done and which still need photos
-3. Open a checkpoint to see **where to go**, **how to shoot** (an angle-by-angle script), a find-it hint and an example reference photo
-4. Pick photos and upload — the server checks each one and replies with a verdict: *good*, *usable but imperfect*, or *rejected + exactly why and how to fix it*
-5. Checkpoints tick themselves off once enough usable photos have arrived
+1. Register with a real name and a password. Active usernames must be unique;
+   passwords may repeat. Registration assigns a permanent ID, starting at `00000`.
+2. Log in with username/password. Volunteers cannot edit their name or ID, but can
+   change their password in Settings.
+3. Browse published tasks and claim up to ten at once. In-progress and submitted
+   tasks count towards this limit; the backend enforces it under concurrent requests.
+4. Follow every checkpoint's shooting instructions. Selected photos are drafts in
+   IndexedDB on the current browser/device; they survive a reload but do not sync
+   between devices. The task page shows progress and allows removing/replacing photos.
+5. After every checkpoint meets its required photo count, submit all photos together.
+   Quality checks run on submission. An invalid/corrupt/duplicate upload rolls the
+   batch back. Pending submissions are locked and cannot be abandoned.
+6. A returned submission goes back to in-progress, retaining the photos and review
+   feedback. The volunteer can change photos, resubmit, or abandon.
+7. Accepted submissions appear under Successful submissions and release their slot.
+   Abandoning clears the attempt and releases its slot; claiming again starts fresh.
 
-### Admins — open `/admin` on the club-room computer
+Account archival permanently preserves the ID, name, password and historical
+records, revokes sessions and releases the username. Registering the same name
+later allocates a new ID; old IDs never get reused. The display pads IDs to at least
+five digits, allowing registration beyond 100,000 accounts. Unfinished assignments
+are closed on archival; already-submitted data remains available for administrator
+review. Volunteers and administrators see participant names update every two seconds.
 
-- **Overview** — global progress, disk usage, training status; auto-refreshes every 10s
-- **Tasks & checkpoints** — create tasks, hand out access codes (or copy a ready-made join link), bulk-import checkpoints, upload reference images, and let the form **estimate how many photos a checkpoint needs from the room's dimensions** (length × width × height; the estimate is only a suggestion and can always be overridden by hand)
-- **Photo review** — filter by task / status / duplicates, search, download originals, export a CSV manifest, and manually override the quality verdict when the heuristic gets it wrong
-- **Training** — the graded pipeline of [`docs/training-pipeline.md`](docs/training-pipeline.md): pick a task, see the **block plan** (one block per room, oversized rooms split further) and the VRAM risk *before* starting, then watch the stages (one COLMAP per building → per-room blocks → merge → align → export). Failed blocks can be retried on their own, reusing the poses that were already solved. Produced point clouds open in a **3D preview that is also a placement editor**: load an outdoor run next to an indoor one, then drag / rotate / scale the blocks into place (or type exact position, X/Y/Z rotation and scale) — two independent COLMAP solves share no features, so this step can never be automatic, and the result is saved as a similarity transform in `transforms.json`. No capture material yet? `uv run python backend/scripts/seed_demo.py` builds demo tasks, synthetic photos and two mock runs, then prints the preview URL. Going real on the 3090 machine: [`docs/training-toolchain.md`](docs/training-toolchain.md) — which trainer to install, the exact `.env` command template for each, and the pitfalls that break unattended runs. gsplat (method A) comes with a one-click installer (`powershell -ExecutionPolicy Bypass -File scripts\setup_gsplat.ps1`), a VRAM-downsampling knob on the training page, and the console's *Status* / block preflight check the command template of whichever toolchain is selected — including the `--save_ply` default that would otherwise end a run with "训练结束但没有找到 .ply"
-- **System** — server hardware (CPU / RAM / GPU and driver), plus **live gauges for CPU, memory, GPU, VRAM and disk** and a per-core load chart
+### Administrators — open `/admin`
 
-The interface is available in **Chinese and English** (switchable from the landing page, the admin sidebar, and the volunteer header).
+- **Tasks & checkpoints:** create, edit descriptions, configure required photos and
+  reference images, or delete your own tasks. Automatically generated task codes
+  cannot be changed. Your tasks appear above the navigation's task-management entry.
+- **Volunteer accounts:** view every active volunteer's name, permanent ID and
+  password; edit names/passwords or archive accounts. Changing a password revokes
+  the volunteer's existing sessions.
+- **Submissions:** inspect each complete submission, download originals, add feedback,
+  then accept or return the entire submission. Decisions are serialized and a
+  submission cannot be reviewed twice.
+- **Photo review, training and 3D preview:** the original quality override, CSV export,
+  reconstruction pipeline and placement editor remain available for your own tasks.
+- **System:** monitor server hardware and resource usage. Global data deletion is disabled.
+
+Legacy password-only administrator sessions and task-code volunteer sessions are
+invalidated once during migration. New accounts persist across server restarts.
 
 ## The photo quality check
 

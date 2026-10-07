@@ -55,6 +55,9 @@ def get_db() -> Iterator[Session]:
 # and doesn't lock the table, which is enough here; move to Alembic once we need
 # to change types or add indexes.
 _ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "auth_sessions": {"admin_id": "INTEGER", "volunteer_id": "INTEGER"},
+    "tasks": {"owner_admin_id": "INTEGER DEFAULT 1"},
+    "photos": {"volunteer_id": "INTEGER", "assignment_id": "INTEGER"},
     "checkpoints": {
         "length_m": "FLOAT",
         "width_m": "FLOAT",
@@ -78,6 +81,11 @@ def init_db() -> None:
     config.ensure_dirs()
     Base.metadata.create_all(bind=engine)
     _add_missing_columns()
+    # Old password-only / task-code sessions have no account identity.
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM auth_sessions WHERE admin_id IS NULL AND volunteer_id IS NULL"))
+        conn.execute(text("UPDATE tasks SET owner_admin_id=1 WHERE owner_admin_id IS NULL"))
 
 
 def _add_missing_columns() -> None:

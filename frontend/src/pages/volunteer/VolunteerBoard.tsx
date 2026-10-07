@@ -1,145 +1,46 @@
-import { Link } from 'react-router-dom'
-import { api } from '../../api'
+import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../auth'
-import {
-  Badge,
-  EmptyState,
-  ErrorBox,
-  LanguageToggle,
-  ProgressBar,
-  Spinner,
-  useAsync,
-} from '../../components/common'
-import { useI18n } from '../../i18n'
-import type { CheckpointProgress } from '../../types'
-
-function checkpointPlace(cp: CheckpointProgress): string {
-  return [cp.building, cp.floor, cp.room].filter(Boolean).join(' · ')
-}
+import { Card, ErrorBox, Spinner, useAsync, usePolling } from '../../components/common'
+import { workflow, assignmentLabel } from '../../workflow'
 
 export default function VolunteerBoard() {
-  const { t } = useI18n()
-  const { logout } = useAuth()
-  const { data, error, loading, reload } = useAsync(() => api.board(), [])
-
-  if (loading) return <Spinner />
-  if (error) return <ErrorBox error={error} onRetry={reload} />
-  if (!data) return null
-
-  const done = data.checkpoints.filter((cp) => cp.status === 'done').length
-  const inProgress = data.checkpoints.filter((cp) => cp.status === 'in_progress').length
-  const pending = data.checkpoints.length - done - inProgress
-  const percent = data.checkpoints.length ? (done / data.checkpoints.length) * 100 : 0
-
-  return (
-    <div className="vol-shell">
-      <header className="vol-top">
-        <div className="title">
-          <h1>{data.task.name}</h1>
-          <div className="sub">
-            {t('board.hello', { name: data.nickname ?? '' })} ·{' '}
-            {t('board.usableTotal', {
-              count: data.checkpoints.reduce((sum, cp) => sum + cp.uploaded_usable, 0),
-            })}
-          </div>
+  const { session, logout } = useAuth()
+  const navigate = useNavigate()
+  const { data, error, loading, reload, silentRefresh } = useAsync(workflow.tasks, [])
+  usePolling(silentRefresh, 2000, true)
+  const [tab, setTab] = useState('all')
+  const [busy, setBusy] = useState<number | null>(null)
+  const [actionError, setActionError] = useState<unknown>(null)
+  async function claim(id: number) {
+    setBusy(id); setActionError(null)
+    try { await workflow.claim(id); await reload(true); navigate(`/v/tasks/${id}`) }
+    catch (err) { setActionError(err) } finally { setBusy(null) }
+  }
+  if (loading && !data) return <Spinner />
+  return <div className="workflow-page">
+    <header className="page-head"><div><h1>志愿者任务大厅</h1><div className="sub">{session?.nickname} · ID {session?.volunteer_id}</div></div>
+      <div className="row"><Link className="btn btn-ghost" to="/v/mine">账号设置</Link><button className="btn btn-ghost" onClick={async () => {await logout(); navigate('/join')}}>退出登录</button></div>
+    </header>
+    <Card><strong>任务槽：{data?.slots_used ?? 0} / 10</strong><p className="small muted">进行中和待审核任务占用任务槽，成功提交或主动放弃后释放。参与者每 2 秒更新。</p>
+      <div className="row">{[['all','全部任务'],['active','我的进行中'],['submitted','待审核'],['accepted','成功提交']].map(([key,label]) => <button key={key} className={`btn ${tab === key ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setTab(key)}>{label}</button>)}</div>
+    </Card>
+    {error || actionError ? <ErrorBox error={actionError || error} /> : null}
+    <div className="workflow-grid">{data?.items.filter(item => tab === 'all' || (tab === 'active' ? item.assignment?.status === 'in_progress' : item.assignment?.status === tab)).map(item => {
+      const state = item.assignment?.status
+      const claimed = state === 'in_progress' || state === 'submitted' || state === 'accepted'
+      return <Card key={item.task.id}>
+        <div className="row" style={{justifyContent:'space-between'}}><span className="tag-code">{item.task.access_code}</span><span className="badge">{claimed ? assignmentLabel[state!] : '未接取'}</span></div>
+        <h2 style={{marginTop: 14}}>{item.task.name}</h2><p>{item.task.description || '暂无任务描述'}</p>
+        <p className="small muted">管理员 {String(item.task.owner_admin_id).padStart(3,'0')} · {item.checkpoint_count} 个拍摄点 · {item.task.location_hint || '地点未填写'}</p>
+        <p className="small">正在进行：{item.active_volunteers.join('、') || '暂无志愿者'}</p>
+        {item.assignment?.review_note && <p className="workflow-note">管理员反馈：{item.assignment.review_note}</p>}
+        <div className="row"><Link className="btn btn-ghost" to={`/v/tasks/${item.task.id}`}>查看任务</Link>
+          {!claimed && item.task.status === 'active' && <button className="btn btn-primary" disabled={busy !== null || (data?.slots_used ?? 0) >= 10} onClick={() => void claim(item.task.id)}>接取</button>}
+          {state === 'in_progress' && <Link className="btn btn-primary" to={`/v/tasks/${item.task.id}`}>继续拍摄</Link>}
         </div>
-        <Link className="btn btn-ghost sm" to="/v/mine">
-          {t('board.mineLink')}
-        </Link>
-        <LanguageToggle />
-        <button type="button" className="btn btn-ghost sm" onClick={() => void logout()}>
-          {t('common.logout')}
-        </button>
-      </header>
-
-      <div className="vol-body">
-        <div className="card">
-          <div className="row between" style={{ marginBottom: 10 }}>
-            <strong>{t('board.progress')}</strong>
-            <span className="muted small">
-              {t('board.summary', { total: data.checkpoints.length, done })}
-            </span>
-          </div>
-          <ProgressBar value={percent} height={10} />
-          <p className="small muted" style={{ marginTop: 10, marginBottom: 0 }}>
-            {t('board.mine', { total: data.my_photo_count, ok: data.my_ok_count })}
-          </p>
-        </div>
-
-        <div className="stat-grid">
-          <div className="stat">
-            <span className="num" style={{ color: 'var(--ok)' }}>
-              {done}
-            </span>
-            <span className="label">{t('status.done')}</span>
-          </div>
-          <div className="stat">
-            <span className="num" style={{ color: 'var(--warn)' }}>
-              {inProgress}
-            </span>
-            <span className="label">{t('status.in_progress')}</span>
-          </div>
-          <div className="stat">
-            <span className="num">{pending}</span>
-            <span className="label">{t('status.pending')}</span>
-          </div>
-        </div>
-
-        {data.checkpoints.length === 0 ? (
-          <EmptyState text={t('board.empty')} />
-        ) : (
-          <>
-            {done === data.checkpoints.length && data.checkpoints.length > 0 && (
-              <div className="card" style={{ background: 'var(--ok-soft)', borderColor: 'var(--ok)' }}>
-                🎉 {t('board.allDone')}
-              </div>
-            )}
-            <p className="small muted" style={{ margin: 0 }}>
-              {t('board.directive')}
-            </p>
-            <div className="cp-list">
-              {data.checkpoints.map((cp) => (
-                <CheckpointRow key={cp.id} cp={cp} />
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function CheckpointRow({ cp }: { cp: CheckpointProgress }) {
-  const { t } = useI18n()
-  const tone = cp.status === 'done' ? 'ok' : cp.status === 'in_progress' ? 'warn' : 'info'
-  const percent = Math.min(100, (cp.uploaded_usable / Math.max(1, cp.shot_count)) * 100)
-  const place = checkpointPlace(cp)
-
-  return (
-    <Link className={`cp-item is-${cp.status === 'in_progress' ? 'progress' : cp.status}`} to={`/v/cp/${cp.id}`}>
-      <span className="index">{cp.order_index + 1}</span>
-      <div className="main">
-        <span className="name">{cp.name}</span>
-        <span className="meta">
-          {place && <>{place} · </>}
-          {t('cp.uploaded', { usable: cp.uploaded_usable, count: cp.shot_count })}
-          {cp.uploaded_rejected > 0 && (
-            <>
-              {' · '}
-              <span style={{ color: 'var(--bad)' }}>
-                {t('board.rejectedInline', { count: cp.uploaded_rejected })}
-              </span>
-            </>
-          )}
-        </span>
-        <ProgressBar value={percent} tone={cp.status === 'done' ? 'ok' : 'warn'} height={6} />
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
-        <Badge tone={tone}>{t(`status.${cp.status}` as never)}</Badge>
-        <span className="small muted">
-          {cp.status === 'done' ? t('board.done') : cp.uploaded_total > 0 ? t('board.redo') : t('board.goto')}
-        </span>
-      </div>
-    </Link>
-  )
+      </Card>
+    })}</div>
+    {data && !data.items.length && <Card><p>管理员还没有发布任务。</p></Card>}
+  </div>
 }

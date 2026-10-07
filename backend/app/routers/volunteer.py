@@ -31,12 +31,7 @@ router = APIRouter(prefix="/api/volunteer", tags=["volunteer"])
 
 
 def _require_task(session: AuthSession, db: OrmSession) -> Task:
-    if session.task_id is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "当前登录没有绑定任务，请用任务访问码重新进入")
-    task = db.get(Task, session.task_id)
-    if task is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "任务已不存在")
-    return task
+    raise HTTPException(410, "请从任务大厅接取任务，并完成全部拍摄点后统一提交")
 
 
 def _load_checkpoint(db: OrmSession, task: Task, checkpoint_id: int) -> Checkpoint:

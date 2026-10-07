@@ -1,10 +1,7 @@
 """Login sessions and authorization.
 
-Two roles:
-  * admin     — the desktop console (club room computer): password login, full
-                access to progress, checkpoint planning and training.
-  * volunteer — the phone interface: joins with a task access code plus a
-                nickname, and only ever sees their own task.
+Five fixed administrator identities own separate tasks. Persistent volunteer
+accounts may claim multiple tasks; media access follows the account ID.
 """
 
 from __future__ import annotations
@@ -12,13 +9,13 @@ from __future__ import annotations
 import secrets
 from datetime import timedelta
 
-from fastapi import Depends, Header, HTTPException, Query, status
+from fastapi import Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session as OrmSession
 
 from . import config
 from .database import get_db
-from .models import AuthSession, utcnow
+from .models import AuthSession, VolunteerAccount, Task, Checkpoint, Photo, TrainingRun, TrainingBlock, utcnow
 
 
 def new_token() -> str:
@@ -31,12 +28,16 @@ def create_session(
     role: str,
     nickname: str | None = None,
     task_id: int | None = None,
+    admin_id: int | None = None,
+    volunteer_id: int | None = None,
 ) -> AuthSession:
     session = AuthSession(
         token=new_token(),
         role=role,
         nickname=nickname,
         task_id=task_id,
+        admin_id=admin_id,
+        volunteer_id=volunteer_id,
         expires_at=utcnow() + timedelta(hours=config.SESSION_TTL_HOURS),
     )
     db.add(session)
@@ -66,6 +67,13 @@ def optional_session(
     session = db.get(AuthSession, token)
     if session is None:
         return None
+    if session.role == "admin" and session.admin_id not in range(1, 6):
+        return None
+    if session.role == "volunteer":
+        account = db.get(VolunteerAccount, session.volunteer_id) if session.volunteer_id else None
+        if account is None or not account.active:
+            return None
+        session.nickname = account.username
     if session.expires_at <= utcnow():
         db.delete(session)
         db.commit()
@@ -90,9 +98,72 @@ def require_admin(session: AuthSession = Depends(current_session)) -> AuthSessio
 
 
 def require_volunteer(session: AuthSession = Depends(current_session)) -> AuthSession:
-    if session.role not in ("volunteer", "admin"):
+    if session.role != "volunteer" or session.volunteer_id is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "需要志愿者权限")
     return session
+
+
+def require_owned_task(db: OrmSession, task_id: int, session: AuthSession) -> Task:
+    task = db.get(Task, task_id)
+    if task is None or task.status == "deleted":
+        raise HTTPException(404, "任务不存在或已删除")
+    if task.owner_admin_id != session.admin_id:
+        raise HTTPException(403, "只能管理自己创建的任务")
+    return task
+
+
+async def admin_scope(request: Request,
+                      session: AuthSession = Depends(require_admin),
+                      db: OrmSession = Depends(get_db)) -> None:
+    """Authorize identifiers in every existing admin route, including training/media helpers."""
+    if request.method not in ('GET', 'HEAD', 'OPTIONS'):
+        from sqlalchemy import text
+        token = session.token
+        db.commit()
+        db.execute(text('BEGIN IMMEDIATE'))
+        db.expire_all()
+        if db.get(AuthSession, token) is None:
+            raise HTTPException(401, '登录已失效')
+    # Keep each source separate: a body/query ID must never mask a path ID.
+    identifiers = list(request.path_params.items())
+    identifiers += [(k, v) for k, v in request.query_params.items() if k.endswith('_id')]
+    body = {}
+    if request.headers.get('content-type', '').startswith('application/json'):
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(400, 'JSON 格式错误')
+        if isinstance(body, dict):
+            identifiers += [(k, v) for k, v in body.items() if k.endswith('_id') and v is not None]
+    for key, value in identifiers:
+        if key not in ('task_id', 'photo_id', 'checkpoint_id', 'run_id', 'block_id'):
+            continue
+        try:
+            record_id = int(value)
+        except (ValueError, TypeError, OverflowError):
+            raise HTTPException(422, '记录 ID 必须是整数')
+        if key == 'task_id':
+            require_owned_task(db, record_id, session)
+        elif key in ('photo_id', 'checkpoint_id', 'run_id', 'block_id'):
+            model = {'photo_id': Photo, 'checkpoint_id': Checkpoint, 'run_id': TrainingRun, 'block_id': TrainingBlock}[key]
+            row = db.get(model, record_id)
+            if row is None:
+                raise HTTPException(404, "记录不存在")
+            if key == 'block_id':
+                row = db.get(TrainingRun, row.run_id)
+            if row is None or row.task_id is None:
+                raise HTTPException(403, "记录没有可管理的任务")
+            require_owned_task(db, row.task_id, session)
+    run_ids = request.query_params.get('with_runs', '').split(',')
+    run_ids += [str(p['run_id']) for p in body.get('placements', []) if p.get('run_id')] if isinstance(body, dict) else []
+    for value in run_ids:
+        if value.strip().isdigit():
+            run = db.get(TrainingRun, int(value))
+            if run:
+                require_owned_task(db, run.task_id, session)
+    if request.url.path in ('/api/admin/reset', '/api/admin/reveal'):
+        if request.url.path.endswith('/reset') or not (body.get('task_id') or body.get('photo_id')):
+            raise HTTPException(403, "固定管理员只能管理自己的任务，不能清空或打开全局数据")
 
 
 def prune_expired_sessions(db: OrmSession) -> int:

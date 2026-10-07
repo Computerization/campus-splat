@@ -1,97 +1,38 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../../auth'
-import { ErrorBox, LanguageSwitcher } from '../../components/common'
-import { useI18n } from '../../i18n'
+import { ErrorBox } from '../../components/common'
 
 export default function VolunteerJoin() {
-  const { t } = useI18n()
-  const { volunteerJoin, session, isAdmin } = useAuth()
+  const { volunteerLogin, isVolunteer } = useAuth()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-
-  const [code, setCode] = useState((searchParams.get('code') ?? '').toUpperCase())
-  const [nickname, setNickname] = useState(session?.nickname ?? '')
+  const location = useLocation()
+  const destination = typeof location.state?.from === 'string' && location.state.from.startsWith('/v/') ? location.state.from : '/v'
+  const [register, setRegister] = useState(false)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
-
-  // Already joined with an access code — go straight to the board
-  useEffect(() => {
-    if (session?.task_id) navigate('/v', { replace: true })
-  }, [session?.task_id, navigate])
-
+  useEffect(() => { if (isVolunteer) navigate(destination, {replace: true}) }, [isVolunteer, navigate, destination])
   async function submit(event: FormEvent) {
     event.preventDefault()
-    if (!code.trim() || !nickname.trim()) return
-    setBusy(true)
-    setError(null)
-    try {
-      await volunteerJoin(code.trim(), nickname.trim())
-      navigate('/v', { replace: true })
-    } catch (err) {
-      setError(err)
-    } finally {
-      setBusy(false)
-    }
+    if (register && password !== confirm) { setError(new Error('两次密码不一致')); return }
+    setBusy(true); setError(null)
+    try { await volunteerLogin(username.trim(), password, register); navigate(destination, {replace: true}) }
+    catch (err) { setError(err) } finally { setBusy(false) }
   }
-
-  return (
-    <div className="auth-page">
-      <div className="auth-card">
-        <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 6 }}>
-          <LanguageSwitcher compact />
-        </div>
-
-        <h1>{t('join.title')}</h1>
-        <p className="sub">{t('join.subtitle')}</p>
-
-        <form onSubmit={submit}>
-          <label className="field">
-            <span>{t('join.code')}</span>
-            <input
-              type="text"
-              value={code}
-              onChange={(event) => setCode(event.target.value.toUpperCase())}
-              placeholder="B3F7K2"
-              autoCapitalize="characters"
-              autoComplete="off"
-              inputMode="text"
-              style={{ fontSize: '1.3rem', letterSpacing: '0.14em', textAlign: 'center' }}
-            />
-            <span className="hint">{t('join.code.hint')}</span>
-          </label>
-
-          <label className="field">
-            <span>{t('join.nickname')}</span>
-            <input
-              type="text"
-              value={nickname}
-              onChange={(event) => setNickname(event.target.value)}
-              placeholder={t('join.nicknamePlaceholder')}
-              maxLength={32}
-            />
-            <span className="hint">{t('join.nickname.hint')}</span>
-          </label>
-
-          {error ? <ErrorBox error={error} /> : null}
-
-          <button
-            type="submit"
-            className="btn btn-primary btn-lg block"
-            disabled={busy || !code.trim() || !nickname.trim()}
-            style={{ marginTop: 8 }}
-          >
-            {busy ? t('common.loading') : t('join.submit')}
-          </button>
-        </form>
-
-        {isAdmin && (
-          <p className="small muted" style={{ marginTop: 16 }}>
-            {t('join.adminNote')} <a href="/admin">{t('join.adminNoteLink')}</a>
-            {t('join.adminNoteEnd')}
-          </p>
-        )}
-      </div>
-    </div>
-  )
+  return <div className="auth-page"><div className="auth-card">
+    <Link to="/">← 返回首页</Link>
+    <h1 style={{marginTop: 20}}>{register ? '注册志愿者账号' : '志愿者登录'}</h1>
+    <p className="sub">{register ? '请使用真实姓名。注册后分配永久 ID，自己不能修改姓名或 ID。' : '使用真实姓名和密码登录，进入任务大厅。'}</p>
+    <form onSubmit={submit}>
+      <label className="field"><span>真实姓名／用户名</span><input required maxLength={64} autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} /></label>
+      <label className="field"><span>密码</span><input required maxLength={128} type="password" autoComplete={register ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} /></label>
+      {register && <label className="field"><span>确认密码</span><input required type="password" autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} /></label>}
+      {error ? <ErrorBox error={error} /> : null}
+      <button className="btn btn-primary block" disabled={busy}>{busy ? '处理中…' : register ? '创建账号并进入' : '登录'}</button>
+    </form>
+    <button className="btn btn-ghost block" style={{marginTop: 12}} disabled={busy} onClick={() => {setRegister(!register); setError(null)}}>{register ? '已有账号，去登录' : '没有账号，注册志愿者'}</button>
+  </div></div>
 }

@@ -12,6 +12,7 @@ import {
   Toast,
   useAsync,
   useTimeFormat,
+  usePolling,
 } from '../../components/common'
 import { useI18n } from '../../i18n'
 
@@ -35,7 +36,8 @@ export default function AdminTasks() {
   const { t } = useI18n()
   const { relativeTime } = useTimeFormat()
   const navigate = useNavigate()
-  const { data, error, loading, reload } = useAsync(() => api.listTasks(true), [])
+  const { data, error, loading, reload, silentRefresh } = useAsync(() => api.listTasks(true), [])
+  usePolling(silentRefresh, 2000, true)
 
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
@@ -58,7 +60,6 @@ export default function AdminTasks() {
         kind: form.kind,
         description: form.description.trim() || undefined,
         location_hint: form.location_hint.trim() || undefined,
-        access_code: form.access_code.trim() || undefined,
       })
       setOpen(false)
       setForm(EMPTY_FORM)
@@ -129,12 +130,13 @@ export default function AdminTasks() {
                       {item.task.location_hint && (
                         <div className="small muted">{item.task.location_hint}</div>
                       )}
+                      <div className="small muted">正在进行：{item.active_volunteers.join('、') || '暂无志愿者'}</div>
                     </td>
                     <td>
                       <span className="tag-code">{item.task.access_code}</span>
                       <div style={{ marginTop: 4 }}>
                         <CopyButton
-                          text={`${window.location.origin}/join?code=${item.task.access_code}`}
+                          text={`${window.location.origin}/v/tasks/${item.task.id}`}
                           label={t('common.copyLink')}
                         />
                       </div>
@@ -258,9 +260,10 @@ export default function AdminTasks() {
             type="text"
             value={form.access_code}
             onChange={(event) => setForm({ ...form, access_code: event.target.value.toUpperCase() })}
-            placeholder="B3F7K2"
+            placeholder="创建后自动生成随机 5 位任务码"
+            disabled
           />
-          <span className="hint">{t('admin.tasks.accessCode.hint')}</span>
+          <span className="hint">任务码由系统生成并永久绑定，不可修改。</span>
         </label>
       </Modal>
 

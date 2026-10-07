@@ -27,6 +27,20 @@
     'Microsoft YaHei', Roboto, sans-serif;
 }
 
+.workflow-page { max-width: 1120px; margin: 0 auto; padding: 28px 22px 60px; }
+.workflow-page.narrow { max-width: 640px; }
+.workflow-page > .card { margin-bottom: 18px; }
+.workflow-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 18px; }
+.workflow-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+.workflow-photo { display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }
+.workflow-photo img { width: 100%; height: 140px; object-fit: cover; border-radius: 8px; background: var(--surface-2); }
+.workflow-reference { max-width: 100%; max-height: 280px; border-radius: 8px; margin-bottom: 16px; }
+.workflow-note { padding: 12px; border-radius: 8px; background: var(--brand-soft); margin: 12px 0; }
+.sidebar-task-heading { color: var(--sidebar-muted); padding: 12px; font-size: 12px; }
+.sidebar-task small { display: block; color: var(--sidebar-muted); font-size: 11px; }
+.sidebar nav { overflow-y: auto; min-height: 0; }
+.sidebar-task > span:last-child { overflow-wrap: anywhere; }
+
 * {
   box-sizing: border-box;
 }
