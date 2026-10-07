@@ -126,7 +126,7 @@ def main() -> int:
     print(f"        本机自测：http://127.0.0.1:{args.port}")
     print(f"        管理端：http://<上面的IP>:{args.port}/admin")
 
-    print("        管理员密码：admin001 至 admin005（固定账号，不能注销）")
+    print("        管理员：001 至 003（固定账号，不能注销）")
     print("        志愿者：注册真实姓名与密码，然后登录接取任务")
 
     print()

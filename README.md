@@ -29,7 +29,7 @@ The whole thing is designed to run on one ordinary desktop in the club room (i5-
 
 | | Volunteers (phone, `/v`) | Admins (desktop, `/admin`) |
 |---|---|---|
-| **How they get in** | Real-name account + password | One of five fixed admin passwords |
+| **How they get in** | Real-name account + password | One of three fixed admin passwords |
 | **What they see** | Where to go, how to shoot, how many photos, instant per-photo feedback | Global progress, checkpoint planning, photo review, submission decisions, volunteer accounts, training jobs, live server metrics |
 
 Everything runs behind a single port: the FastAPI backend also serves the built React frontend, so volunteers just open `http://<lan-ip>:8000` on their phones.
@@ -88,14 +88,19 @@ Volunteers on the same network use the LAN address the launcher prints, e.g. `ht
 
 ## Fixed administrator accounts
 
-Five permanent administrator identities log in using only their assigned password.
+Three permanent administrator identities log in using only their assigned password.
 Obtain the password for your administrator identity from the platform maintainer.
 They cannot be deleted. Signing out ends only the current session.
 Each administrator owns the tasks they create and can edit/delete only their own
- tasks, checkpoints, photos, training runs and submissions. Existing tasks migrate
+ tasks, checkpoints, photos and submissions. Only administrator 001 can access
+ training, logs, model previews and exports for their own tasks. Training executes
+ on the computer running the platform backend and saves output in its local
+ `data/training/` directory (or the configured data directory). To store output on
+ administrator 001's computer, run the platform backend on that computer.
+ Existing tasks migrate
  to administrator 001. Task codes are generated automatically: five random letters
  and digits, unique and immutable. Newest tasks appear first, including in the sidebar.
- All five administrators can list active volunteer accounts and change their
+ All three administrators can list active volunteer accounts and change their
  usernames/passwords or archive them. As requested, this list includes current
  passwords; these recoverable credentials are stored with the account ID.
 

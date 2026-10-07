@@ -46,8 +46,8 @@ FRONTEND_DIST = Path(
     os.environ.get("THREEDGS_FRONTEND_DIST") or (BASE_DIR / "frontend" / "dist")
 ).resolve()
 
-# Five permanent administrator identities; password-only login.
-ADMIN_PASSWORDS = {i: f"admin{i:03d}" for i in range(1, 6)}
+# Three permanent administrator identities; password-only login.
+ADMIN_PASSWORDS = {i: f"admin{i:03d}" for i in range(1, 4)}
 # CLI helpers default to administrator 001.
 ADMIN_PASSWORD = ADMIN_PASSWORDS[1]
 

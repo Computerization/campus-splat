@@ -1,6 +1,7 @@
 """Account identity, ownership, concurrency and complete submission state machine."""
 import json
 import re
+import pytest
 from concurrent.futures import ThreadPoolExecutor
 
 from sqlalchemy import select
@@ -33,18 +34,54 @@ def submit(client, volunteer, task_id, cp_id, seed=912):
         files=[('files',('photo.jpg',jpeg_bytes(make_textured_image(1800,1200,seed=seed)),'image/jpeg'))])
 
 
-def test_five_fixed_admins_and_independent_sessions(client):
+def test_three_fixed_admins_and_independent_sessions(client):
     sessions = []
-    for i in range(1,6):
+    for i in range(1,4):
         r = client.post('/api/auth/admin/login',json={'password':f'admin{i:03d}'})
         assert r.status_code == 200
         assert r.json()['admin_id'] == i
         sessions.append(r.json())
     assert client.post('/api/auth/admin/login',json={'password':'admin123'}).status_code == 401
+    for password in ('admin004', 'admin005'):
+        assert client.post('/api/auth/admin/login',json={'password':password}).status_code == 401
+    from app.security import create_session
+    with SessionLocal() as db:
+        retired = create_session(db, role='admin', admin_id=4, nickname='旧管理员 004')
+        retired_token = retired.token
+    assert client.get('/api/auth/me',headers={'Authorization':f'Bearer {retired_token}'}).status_code == 401
     second = client.post('/api/auth/admin/login',json={'password':'admin001'}).json()
     client.post('/api/auth/logout',headers=headers(sessions[0]))
     assert client.get('/api/auth/me',headers=headers(second)).status_code == 200
     assert client.delete('/api/auth/admin/account',headers=headers(second)).status_code in (404,405)
+
+
+@pytest.mark.parametrize('admin_id', [2, 3])
+def test_training_only_available_to_admin_001(client, admin_headers, admin_id):
+    restricted = headers(client.post('/api/auth/admin/login', json={'password': f'admin{admin_id:03d}'}).json())
+    owned, _ = task(client, restricted, f'无训练权限管理员{admin_id}任务')
+    routes = [
+        ('GET', '/api/admin/training', None),
+        ('GET', '/api/admin/training/queue', None),
+        ('GET', f"/api/admin/training/preflight?task_id={owned['id']}", None),
+        ('POST', '/api/admin/training', {'task_id': owned['id']}),
+        ('GET', '/api/admin/training/999999', None),
+        ('GET', '/api/admin/training/999999/log', None),
+        ('GET', '/api/admin/training/999999/preview', None),
+        ('GET', '/api/admin/training/999999/artifacts/model.ply', None),
+        ('POST', '/api/admin/training/999999/cancel', None),
+        ('PUT', '/api/admin/training/999999/transforms', {'placements': []}),
+        ('GET', '/api/admin/training/blocks/999999/log', None),
+        ('POST', '/api/admin/training/blocks/999999/retry', None),
+    ]
+    for method, path, body in routes:
+        response = client.request(method, path, headers=restricted, json=body)
+        assert response.status_code == 403, (method, path, response.text)
+        assert response.json()['detail'] == '只有管理员 001 有训练权限'
+    assert client.get('/api/admin/overview', headers=restricted).json()['training'] == []
+    assert client.get('/api/admin/system', headers=restricted).json()['training_queue'] is None
+    assert client.get('/api/admin/volunteers', headers=restricted).status_code == 200
+    assert client.get('/api/admin/training', headers=admin_headers).status_code == 200
+    assert client.get('/api/admin/training/queue', headers=admin_headers).status_code == 200
 
 
 def test_permanent_ids_released_names_and_shared_passwords(client, admin_headers):

@@ -34,7 +34,7 @@ export default function AdminLayout() {
           <div className="sidebar-task-heading">我创建的任务</div>
           {tasks?.map(item => <NavLink key={item.task.id} to={`/admin/tasks/${item.task.id}`} className={({isActive}) => isActive ? 'active sidebar-task' : 'sidebar-task'}><span>📌</span><span>{item.task.name}<small>{item.task.access_code}</small></span></NavLink>)}
           {!tasks?.length && <div className="sidebar-task-heading">暂无任务</div>}
-          {items.map((item) => (
+          {items.filter(item => item.to !== '/admin/training' || session?.admin_id === 1).map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

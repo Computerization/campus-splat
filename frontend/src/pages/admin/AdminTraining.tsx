@@ -147,6 +147,7 @@ export default function AdminTraining() {
         <div>
           <h1>{t('admin.training.title')}</h1>
           <div className="sub">{t('admin.training.subtitle')}</div>
+          <p className="small muted">仅管理员 001 可训练。训练在运行平台的电脑本机执行，结果保存在 {system?.data_dir ? `${system.data_dir}\\training` : '本机 data/training 目录'}。</p>
         </div>
         <button type="button" className="btn btn-ghost" onClick={() => void reload()}>
           {t('common.refresh')}

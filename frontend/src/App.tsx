@@ -41,6 +41,13 @@ function RequireVolunteer({ children }: { children: JSX.Element }) {
   return children
 }
 
+function RequireTrainingAdmin({ children }: { children: JSX.Element }) {
+  const { session, ready } = useAuth()
+  if (!ready) return <Spinner />
+  if (session?.admin_id !== 1) return <Navigate to="/admin" replace />
+  return children
+}
+
 export default function App() {
   return (
     <Routes>
@@ -89,13 +96,13 @@ export default function App() {
         <Route path="volunteers" element={<AdminVolunteers />} />
         <Route path="submissions" element={<AdminSubmissions />} />
         <Route path="photos" element={<AdminPhotos />} />
-        <Route path="training" element={<AdminTraining />} />
+        <Route path="training" element={<RequireTrainingAdmin><AdminTraining /></RequireTrainingAdmin>} />
         <Route
           path="training/:runId/preview"
           element={
-            <Suspense fallback={<Spinner />}>
+            <RequireTrainingAdmin><Suspense fallback={<Spinner />}>
               <AdminTrainingPreview />
-            </Suspense>
+            </Suspense></RequireTrainingAdmin>
           }
         />
         <Route path="system" element={<AdminSystem />} />

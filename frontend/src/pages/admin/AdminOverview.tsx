@@ -14,8 +14,10 @@ import {
   useTimeFormat,
 } from '../../components/common'
 import { useI18n } from '../../i18n'
+import { useAuth } from '../../auth'
 
 export default function AdminOverview() {
+  const { session } = useAuth()
   const { t } = useI18n()
   const { relativeTime } = useTimeFormat()
   const { data, error, loading, reload, silentRefresh } = useAsync(() => api.overview(), [])
@@ -91,7 +93,7 @@ export default function AdminOverview() {
           </p>
         </Card>
 
-        <Card>
+        {session?.admin_id === 1 && <Card>
           <div className="card-head">
             <h3>{t('admin.overview.training')}</h3>
             <Link className="btn btn-ghost sm" to="/admin/training">
@@ -121,7 +123,7 @@ export default function AdminOverview() {
               ))}
             </div>
           )}
-        </Card>
+        </Card>}
       </div>
 
       <Card>

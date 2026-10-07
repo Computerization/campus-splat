@@ -1,6 +1,6 @@
 """Login sessions and authorization.
 
-Five fixed administrator identities own separate tasks. Persistent volunteer
+Three fixed administrator identities own separate tasks. Persistent volunteer
 accounts may claim multiple tasks; media access follows the account ID.
 """
 
@@ -67,7 +67,7 @@ def optional_session(
     session = db.get(AuthSession, token)
     if session is None:
         return None
-    if session.role == "admin" and session.admin_id not in range(1, 6):
+    if session.role == "admin" and session.admin_id not in config.ADMIN_PASSWORDS:
         return None
     if session.role == "volunteer":
         account = db.get(VolunteerAccount, session.volunteer_id) if session.volunteer_id else None
@@ -97,6 +97,12 @@ def require_admin(session: AuthSession = Depends(current_session)) -> AuthSessio
     return session
 
 
+def require_training_admin(session: AuthSession = Depends(require_admin)) -> AuthSession:
+    if session.admin_id != 1:
+        raise HTTPException(403, '只有管理员 001 有训练权限')
+    return session
+
+
 def require_volunteer(session: AuthSession = Depends(current_session)) -> AuthSession:
     if session.role != "volunteer" or session.volunteer_id is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "需要志愿者权限")
@@ -116,6 +122,8 @@ async def admin_scope(request: Request,
                       session: AuthSession = Depends(require_admin),
                       db: OrmSession = Depends(get_db)) -> None:
     """Authorize identifiers in every existing admin route, including training/media helpers."""
+    if request.url.path == '/api/admin/training' or request.url.path.startswith('/api/admin/training/'):
+        require_training_admin(session)
     if request.method not in ('GET', 'HEAD', 'OPTIONS'):
         from sqlalchemy import text
         token = session.token

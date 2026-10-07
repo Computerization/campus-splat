@@ -20,7 +20,7 @@ export default function AdminVolunteers() {
     try {await workflow.archiveAccount(account.id); await reload(true)} catch(err) {setActionError(err)} finally {setBusy(false)}
   }
   if (loading && !data) return <Spinner />
-  return <><div className="page-head"><div><h1>志愿者账号管理</h1><p className="sub">所有未注销账号 · 姓名、ID 与密码 · 五位管理员均可管理</p></div></div>
+  return <><div className="page-head"><div><h1>志愿者账号管理</h1><p className="sub">所有未注销账号 · 姓名、ID 与密码 · 三位管理员均可管理</p></div></div>
     {error || actionError ? <ErrorBox error={actionError || error} /> : null}
     <Card><div className="table-wrap"><table><thead><tr><th>永久 ID</th><th>真实姓名／用户名</th><th>密码</th><th>注册时间</th><th>操作</th></tr></thead>
       <tbody>{data?.map(account => <tr key={account.id}><td><span className="tag-code">{account.id}</span></td><td>{account.username}</td><td>{account.password}</td><td>{new Date(account.created_at + 'Z').toLocaleString()}</td><td><div className="row">

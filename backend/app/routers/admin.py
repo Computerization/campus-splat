@@ -93,11 +93,14 @@ def overview(
     session: AuthSession = Depends(require_admin),
     db: OrmSession = Depends(get_db),
 ) -> dict:
-    return stats.build_overview(db, include_archived=include_archived, owner_admin_id=session.admin_id).model_dump(mode="json")
+    result = stats.build_overview(db, include_archived=include_archived, owner_admin_id=session.admin_id)
+    if session.admin_id != 1:
+        result.training = []
+    return result.model_dump(mode="json")
 
 
 @router.get("/system")
-def system_info(db: OrmSession = Depends(get_db)) -> dict:
+def system_info(db: OrmSession = Depends(get_db), session: AuthSession = Depends(require_admin)) -> dict:
     """Hardware, storage and dependency status."""
     counts = db.execute(
         select(Photo.status, func.count(Photo.id)).group_by(Photo.status)
@@ -109,7 +112,7 @@ def system_info(db: OrmSession = Depends(get_db)) -> dict:
         "photo_status_counts": {status_: count for status_, count in counts},
         "heif_supported": HEIF_SUPPORTED,
         "opencv_available": OPENCV_AVAILABLE,
-        "training_queue": queue_depth(db),
+        "training_queue": queue_depth(db) if session.admin_id == 1 else None,
     }
 
 

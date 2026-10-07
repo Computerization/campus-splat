@@ -376,7 +376,7 @@ export interface SystemInfo {
     colmap_configured: boolean
     vocab_tree_configured: boolean
     toolchains: Record<'3dgs' | 'gsplat', ToolchainStatus>
-  }
+  } | null
 }
 
 export interface Metrics {
