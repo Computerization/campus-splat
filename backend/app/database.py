@@ -60,6 +60,15 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "width_m": "FLOAT",
         "room_height_m": "FLOAT",
     },
+    # The graded pipeline (docs/training-pipeline.md) turned a "job" into a run
+    # with blocks, artifacts and a reuse pointer.
+    "training_runs": {
+        "scope_kind": "VARCHAR(16) DEFAULT 'indoor'",
+        "block_total": "INTEGER DEFAULT 0",
+        "block_done": "INTEGER DEFAULT 0",
+        "artifacts": "JSON",
+        "reuse_run_id": "INTEGER",
+    },
 }
 
 

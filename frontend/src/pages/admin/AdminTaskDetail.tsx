@@ -235,6 +235,21 @@ export default function AdminTaskDetail() {
           <a className="btn btn-ghost" href={api.exportCsvUrl(taskId)}>
             {t('admin.photos.export')}
           </a>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={async () => {
+              try {
+                const result = await api.reveal({ task_id: taskId })
+                setToast(t('admin.tasks.folderOpened', { path: result.path }))
+              } catch (err) {
+                setToast(String(err))
+              }
+              window.setTimeout(() => setToast(null), 4000)
+            }}
+          >
+            📂 {t('admin.tasks.openFolder')}
+          </button>
         </div>
       </div>
 

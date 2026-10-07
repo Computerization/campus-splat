@@ -756,6 +756,161 @@ textarea {
   font-size: 0.95rem;
 }
 
+/* ---- Volunteer: default shooting tips (figures + captions) ---- */
+
+.shot-tips .tip-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.shot-tips .tip-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.shot-tips .tip-figure {
+  flex: none;
+  width: 132px;
+  margin: 0;
+  text-align: center;
+}
+
+.shot-tips .tip-figure svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.shot-tips .tip-figure figcaption {
+  margin-top: 4px;
+  font-size: 0.7rem;
+  line-height: 1.3;
+  color: var(--muted);
+}
+
+.shot-tips .tip-text {
+  min-width: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.shot-tips .tip-text strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.shot-tips .tip-plain {
+  margin: 14px 0 0;
+  padding-left: 18px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.shot-tips .tip-plain li + li {
+  margin-top: 4px;
+}
+
+/* Figure palette, so the drawings follow the theme colours */
+
+.shot-tips .floor {
+  fill: var(--surface-2);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+/* Slightly stronger than --info-soft: at 130 px wide the pale tone vanished */
+.shot-tips .cone {
+  fill: #cfe7fa;
+  stroke: #8ec2e8;
+  stroke-width: 0.8;
+}
+
+.shot-tips .cam {
+  fill: var(--brand);
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+
+.shot-tips .aim {
+  fill: var(--brand);
+}
+
+.shot-tips .overlap {
+  fill: var(--warn-soft);
+  stroke: var(--warn);
+  stroke-width: 1.2;
+  stroke-dasharray: 3 3;
+}
+
+.shot-tips .route {
+  fill: none;
+  stroke: var(--info);
+  stroke-width: 2;
+  stroke-dasharray: 4 3;
+}
+
+.shot-tips .door {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+/* Painted in the card's own background colour: cuts a doorway out of a wall */
+.shot-tips .gap {
+  fill: none;
+  stroke: var(--surface);
+  stroke-width: 5;
+}
+
+.shot-tips .slab {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.shot-tips .stairs {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Floor / ceiling cones: same shape as .cone, tinted so the three aiming
+   angles in the "surfaces" figure stay distinguishable */
+.shot-tips .cone-floor {
+  fill: #dcf0dd;
+  stroke: #8ec79a;
+  stroke-width: 0.8;
+}
+
+.shot-tips .cone-ceil {
+  fill: #fbe9cd;
+  stroke: #dcaa5f;
+  stroke-width: 0.8;
+}
+
+@media (max-width: 420px) {
+  .shot-tips .tip-item {
+    flex-direction: column;
+  }
+
+  .shot-tips .tip-figure {
+    width: 100%;
+    max-width: 240px;
+    margin: 0 auto;
+  }
+}
+
 .angle-list {
   display: flex;
   flex-direction: column;
@@ -1160,6 +1315,224 @@ tbody tr:hover {
   flex-wrap: wrap;
 }
 
+/* ---------------------------------------------------------------- Training pipeline */
+
+.stage-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.stage-chip {
+  font-size: 0.72rem;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: var(--surface-2);
+  white-space: nowrap;
+}
+
+.stage-chip.done {
+  color: var(--ok);
+  border-color: var(--ok-soft);
+  background: var(--ok-soft);
+}
+
+.stage-chip.active {
+  color: var(--info);
+  border-color: var(--info);
+  background: var(--info-soft);
+  font-weight: 600;
+}
+
+.run-detail {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.data-table th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.data-table tbody tr:hover {
+  background: var(--surface-2);
+}
+
+.plain-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.warn-text {
+  color: var(--warn);
+}
+
+.ok-text {
+  color: var(--ok);
+}
+
+/* ---------------------------------------------------------------- 3D preview */
+
+.preview-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: calc(100vh - 96px);
+  min-height: 460px;
+}
+
+.preview-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.preview-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 264px;
+  gap: 12px;
+  min-height: 0;
+}
+
+.preview-canvas {
+  position: relative;
+  min-height: 320px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #0b1220;
+}
+
+.preview-canvas.edit-active {
+  outline: 2px solid var(--info);
+  outline-offset: -2px;
+}
+
+/* Floating hint shown while edit mode is on */
+.preview-toast {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  z-index: 10;
+  pointer-events: none;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(15, 23, 42, 0.82);
+  color: #e2e8f0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.preview-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 12px;
+  overflow: auto;
+}
+
+.preview-scenes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.preview-scenes li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.preview-scenes li:hover {
+  background: var(--surface-2);
+}
+
+.preview-scenes li.active {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+
+.preview-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.preview-scene-text {
+  min-width: 0;
+}
+
+/* Placement editor: offset triad + slider rows */
+
+.placement-grid {
+  display: grid;
+  grid-template-columns: 88px repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.placement-grid > input[type='range'] {
+  grid-column: span 2;
+  width: 100%;
+}
+
+.placement-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.placement-input input {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  font-size: 0.78rem;
+}
+
+.placement-grid input[type='number'] {
+  padding: 4px 6px;
+  font-size: 0.78rem;
+}
+
 .kv {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -1380,5 +1753,10 @@ tbody tr:hover {
 
   .admin-main {
     padding: 16px 14px 60px;
+  }
+
+  .preview-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(320px, 1fr) auto;
   }
 }

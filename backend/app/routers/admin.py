@@ -8,20 +8,24 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import random
+import shutil
 import string
+import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import config, storage
 from ..database import get_db
-from ..models import AuthSession, Checkpoint, Photo, Task, TrainingRun, utcnow
+from ..models import AuthSession, Checkpoint, Photo, Task, TrainingBlock, TrainingRun, utcnow
 from ..quality import HEIF_SUPPORTED
 from ..quality.metrics import OPENCV_AVAILABLE
 from ..schemas import (
@@ -33,16 +37,24 @@ from ..schemas import (
     PhotoPage,
     PhotoReviewIn,
     QualityOut,
+    ResetIn,
+    RevealIn,
     TaskCreateIn,
     TaskOut,
     TaskPatchIn,
     TaskProgressOut,
+    TransformUpdateIn,
+    TrainingBlockOut,
     TrainingCreateIn,
+    TrainingPreflightOut,
+    TrainingPreviewOut,
+    TrainingPreviewSceneOut,
+    TrainingRunDetailOut,
     TrainingRunOut,
 )
 from ..security import prune_expired_sessions, require_admin
-from ..services import stats, sysinfo
-from ..services.training import create_run, manager, queue_depth
+from ..services import splat, stats, sysinfo, training
+from ..services.training import manager, queue_depth
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
@@ -222,12 +234,7 @@ def delete_task(
         storage.delete_file(rel)
     if purge_files:
         folder = config.UPLOAD_DIR / f"task{task_id}"
-        try:
-            import shutil
-
-            shutil.rmtree(folder, ignore_errors=True)
-        except Exception:
-            pass
+        shutil.rmtree(folder, ignore_errors=True)
     return {"ok": True, "deleted_photos": len(rel_paths)}
 
 
@@ -565,6 +572,27 @@ def export_photos_csv(task_id: int, db: OrmSession = Depends(get_db)) -> Streami
 # ---------------------------------------------------------------- training
 
 
+def _read_log(rel_path: str | None, tail: int) -> tuple[list[str], int]:
+    if not rel_path:
+        return [], 0
+    try:
+        path = storage.resolve(rel_path)
+    except HTTPException:
+        return [], 0
+    if not path.exists():
+        return [], 0
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    return lines[-tail:], len(lines)
+
+
+def _run_detail(run: TrainingRun) -> TrainingRunDetailOut:
+    base = stats.to_training_out(run)
+    return TrainingRunDetailOut(
+        **base.model_dump(),
+        blocks=[TrainingBlockOut.model_validate(block) for block in run.blocks],
+    )
+
+
 @router.get("/training", response_model=list[TrainingRunOut])
 def list_training_runs(
     limit: int = Query(default=30, ge=1, le=200),
@@ -582,63 +610,128 @@ def training_queue(db: OrmSession = Depends(get_db)) -> dict:
     return queue_depth(db)
 
 
-@router.post("/training", response_model=TrainingRunOut, status_code=201)
+@router.get("/training/preflight", response_model=TrainingPreflightOut)
+def training_preflight(
+    task_id: int = Query(..., ge=1),
+    block_max_photos: int = Query(
+        default=int(config.TRAINING_DEFAULTS["block_max_photos"]), ge=20, le=5000
+    ),
+    # The trainer parameters the admin has on screen: the preflight checks the
+    # command template of *that* toolchain (docs/training-toolchain.md §二).
+    toolchain: str = Query(default=str(config.TRAINING_DEFAULTS["toolchain"]), pattern="^(3dgs|gsplat)$"),
+    # gsplat's image downsampling: 1 = full size, 2/4 = the doc's VRAM levers
+    data_factor: int = Query(default=1, ge=1, le=4),
+    iterations: int = Query(default=int(config.TRAINING_DEFAULTS["iterations"]), ge=1000, le=200000),
+    db: OrmSession = Depends(get_db),
+) -> TrainingPreflightOut:
+    """Show the block plan (and the risks) before committing to a run."""
+    if data_factor not in (1, 2, 4):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "图像降采样只能是 1 / 2 / 4")
+    try:
+        data = training.preflight(
+            db,
+            task_id=task_id,
+            block_max_photos=block_max_photos,
+            params={
+                "block_max_photos": block_max_photos,
+                "toolchain": toolchain,
+                "data_factor": data_factor,
+                "iterations": iterations,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return TrainingPreflightOut.model_validate(data)
+
+
+@router.post("/training", response_model=TrainingRunDetailOut, status_code=201)
 def create_training_run(
     payload: TrainingCreateIn,
     session: AuthSession = Depends(require_admin),
     db: OrmSession = Depends(get_db),
-) -> TrainingRunOut:
-    if payload.task_id is not None:
-        task = db.get(Task, payload.task_id)
-        if task is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "任务不存在")
-        eligible = stats.eligible_photo_count(db, payload.task_id)
-        if eligible == 0:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, "这个任务还没有可用的照片，先让志愿者多拍一些"
-            )
+) -> TrainingRunDetailOut:
+    if payload.task_id is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "请选择要重建的任务")
 
+    params = payload.params.model_dump() if payload.params is not None else None
     try:
-        run = create_run(
+        run = training.create_run(
             db,
             task_id=payload.task_id,
             name=payload.name,
-            params=payload.params,
+            params=params,
             created_by=session.nickname or "admin",
         )
     except ValueError as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
     manager.start()
     db.refresh(run)
-    return stats.to_training_out(run)
+    return _run_detail(run)
 
 
-@router.get("/training/{run_id}", response_model=TrainingRunOut)
-def training_detail(run_id: int, db: OrmSession = Depends(get_db)) -> TrainingRunOut:
+@router.get("/training/blocks/{block_id}/log")
+def training_block_log(
+    block_id: int,
+    tail: int = Query(default=300, ge=1, le=5000),
+    db: OrmSession = Depends(get_db),
+) -> dict:
+    block = db.get(TrainingBlock, block_id)
+    if block is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "训练块不存在")
+    lines, total = _read_log(block.log_path, tail)
+    return {"lines": lines, "path": block.log_path, "total": total, "block_id": block.id}
+
+
+@router.post("/training/blocks/{block_id}/retry", response_model=TrainingRunDetailOut, status_code=201)
+def retry_training_block(
+    block_id: int,
+    session: AuthSession = Depends(require_admin),
+    db: OrmSession = Depends(get_db),
+) -> TrainingRunDetailOut:
+    """Re-queue one failed block, reusing the poses of the original run."""
+    block = db.get(TrainingBlock, block_id)
+    if block is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "训练块不存在")
+    try:
+        run = training.retry_block(db, block, created_by=session.nickname or "admin")
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    manager.start()
+    db.refresh(run)
+    return _run_detail(run)
+
+
+@router.get("/training/{run_id}", response_model=TrainingRunDetailOut)
+def training_detail(run_id: int, db: OrmSession = Depends(get_db)) -> TrainingRunDetailOut:
     run = db.get(TrainingRun, run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "训练任务不存在")
     manager.start()
-    return stats.to_training_out(run)
+    return _run_detail(run)
 
 
-@router.post("/training/{run_id}/cancel", response_model=TrainingRunOut)
-def cancel_training(run_id: int, db: OrmSession = Depends(get_db)) -> TrainingRunOut:
+@router.post("/training/{run_id}/cancel", response_model=TrainingRunDetailOut)
+def cancel_training(run_id: int, db: OrmSession = Depends(get_db)) -> TrainingRunDetailOut:
     run = db.get(TrainingRun, run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "训练任务不存在")
     if run.status in ("succeeded", "failed", "cancelled"):
-        return stats.to_training_out(run)
+        return _run_detail(run)
 
     note = manager.cancel(run_id)
     run.status = "cancelled"
     run.stage = "cancelled"
     run.message = note
     run.finished_at = utcnow()
+    for block in run.blocks:
+        if block.status not in ("succeeded", "failed", "skipped", "cancelled"):
+            block.status = "cancelled"
+            block.message = "训练已取消"
+            block.finished_at = utcnow()
     db.commit()
     db.refresh(run)
-    return stats.to_training_out(run)
+    return _run_detail(run)
 
 
 @router.get("/training/{run_id}/log")
@@ -650,12 +743,497 @@ def training_log(
     run = db.get(TrainingRun, run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "训练任务不存在")
-    if not run.log_path:
-        return {"lines": [], "path": None}
+    lines, total = _read_log(run.log_path, tail)
+    return {"lines": lines, "path": run.log_path, "total": total}
 
-    path = storage.resolve(run.log_path)
+
+_BLOCK_COLORS = [
+    [0.82, 0.42, 0.36],
+    [0.36, 0.64, 0.82],
+    [0.44, 0.76, 0.46],
+    [0.86, 0.74, 0.34],
+    [0.62, 0.46, 0.82],
+    [0.36, 0.78, 0.76],
+]
+
+
+@router.get("/training/{run_id}/preview", response_model=TrainingPreviewOut)
+def training_preview(
+    run_id: int,
+    with_runs: str = Query(default="", description="额外叠加显示的 run id，逗号分隔"),
+    session: AuthSession = Depends(require_admin),
+    db: OrmSession = Depends(get_db),
+) -> TrainingPreviewOut:
+    """Everything the admin 3D preview needs to load this run's point clouds.
+
+    `with_runs` additionally lists the point clouds of other runs — typically an
+    outdoor run while the admin places an indoor one, which is the manual form
+    of the "indoor → outdoor" step in docs/training-pipeline.md §6.2.
+
+    The artifacts themselves are streamed by `training_artifact`, using the
+    session token in the query string because a WebGL loader cannot set an
+    Authorization header.
+    """
+    run = db.get(TrainingRun, run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "训练任务不存在")
+
+    host = _load_transforms(run)
+    host_placements = {
+        (placement.get("run_id"), str(placement.get("key"))): placement
+        for placement in (host.get("placements") or [])
+        if isinstance(placement, dict)
+    }
+
+    others: list[TrainingRun] = []
+    seen: set[int] = {run.id}
+    for raw in with_runs.split(","):
+        text = raw.strip()
+        if not text.isdigit():
+            continue
+        other_id = int(text)
+        if other_id in seen:
+            continue
+        seen.add(other_id)
+        other = db.get(TrainingRun, other_id)
+        if other is not None:
+            others.append(other)
+
+    def url(target: TrainingRun, key: str) -> str:
+        # The path must end in ".ply": the WebGL loader picks its parser from the
+        # URL suffix, and a query string after the extension makes it bail out
+        # with "File format not supported".
+        return f"/api/admin/training/{target.id}/artifacts/{key}.ply?token={session.token}"
+
+    scenes: list[TrainingPreviewSceneOut] = []
+    for target in [run, *others]:
+        is_reference = target.id != run.id
+        own = _load_transforms(target) if is_reference else host
+        own_blocks = {
+            str(block.get("key")): block
+            for block in (own.get("blocks") or [])
+            if isinstance(block, dict)
+        }
+        merged_meta = own.get("merged") if isinstance(own.get("merged"), dict) else {}
+        block_rows = {block.key: block for block in target.blocks}
+
+        for order, (key, artifact) in enumerate(_scene_artifacts(target).items()):
+            meta = merged_meta if key == "merged" else (own_blocks.get(key) or {})
+            entry = meta if isinstance(meta, dict) else {}
+            base_pivot = (
+                (entry.get("placement") or {}).get("pivot")
+                or entry.get("camera_center")
+                or [0.0, 0.0, 0.0]
+            )
+            if is_reference:
+                # A cloud of another run is placed relative to *this* run
+                saved = host_placements.get((target.id, key))
+                placement = splat.sanitize_placement(
+                    (saved or {}).get("placement"), base_pivot
+                )
+                transform_source = "manual" if saved else "identity"
+            else:
+                placement = splat.sanitize_placement(entry.get("placement"), base_pivot)
+                transform_source = str(entry.get("transform_source") or "identity")
+
+            block = block_rows.get(key)
+            scenes.append(
+                TrainingPreviewSceneOut(
+                    key=f"{target.id}:{key}" if is_reference else key,
+                    name=(
+                        block.name
+                        if block is not None
+                        else str(entry.get("name") or ("合并模型" if key == "merged" else key))
+                    ),
+                    url=url(target, key),
+                    run_id=target.id,
+                    is_reference=is_reference,
+                    block_key=None if key == "merged" else key,
+                    merged=key == "merged",
+                    gaussians=int(entry.get("gaussians") or artifact.get("gaussians") or 0),
+                    size_bytes=int(artifact.get("size_bytes") or 0),
+                    # Offset the reference palette so the stacked run is visually
+                    # distinct from the one being placed
+                    color=_BLOCK_COLORS[
+                        (order + (3 if is_reference else 0)) % len(_BLOCK_COLORS)
+                    ],
+                    placement=placement,
+                    transform=splat.matrix_for_placement(placement),
+                    transform_source=transform_source,
+                )
+            )
+
+    # Merged clouds first, then this run's blocks, then the reference runs.
+    scenes.sort(key=lambda scene: (not scene.merged, scene.is_reference, scene.name))
+    return TrainingPreviewOut(
+        run_id=run.id,
+        name=run.name,
+        status=run.status,
+        coordinate_system=_coordinate_system(run),
+        scenes=scenes,
+    )
+
+
+def _scene_artifacts(run: TrainingRun) -> dict[str, dict]:
+    """``key -> ply artifact`` for every point cloud of a run."""
+    artifacts: dict[str, dict] = {}
+    for artifact in run.artifacts or []:
+        if artifact.get("kind") == "ply" and artifact.get("path"):
+            artifacts[str(artifact.get("block_key") or "merged")] = artifact
+    return artifacts
+
+
+def _scene_paths(run: TrainingRun) -> dict[str, str]:
+    """``key -> artifact path`` for every point cloud of a run."""
+    return {
+        key: str(artifact["path"]) for key, artifact in _scene_artifacts(run).items()
+    }
+
+
+def _load_transforms(run: TrainingRun) -> dict:
+    """The run's transforms.json (empty dict when it doesn't exist yet)."""
+    artifact = next(
+        (item for item in (run.artifacts or []) if item.get("kind") == "transform"),
+        None,
+    )
+    if not artifact or not artifact.get("path"):
+        return {}
+    try:
+        path = storage.resolve(str(artifact["path"]))
+        if not path.exists():
+            return {}
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _base_pivot(meta: dict | None) -> list[float]:
+    entry = meta if isinstance(meta, dict) else {}
+    value = (entry.get("placement") or {}).get("pivot") or entry.get("camera_center")
+    if isinstance(value, (list, tuple)) and len(value) == 3:
+        return [float(item) for item in value]
+    return [0.0, 0.0, 0.0]
+
+
+def _coordinate_system(run: TrainingRun) -> str:
+    """Read the coordinate system the pipeline recorded in transforms.json."""
+    value = _load_transforms(run).get("coordinate_system")
+    if isinstance(value, str) and value:
+        return value
+    return "colmap_world"
+
+
+@router.put("/training/{run_id}/transforms")
+def update_training_transforms(
+    run_id: int,
+    payload: TransformUpdateIn,
+    session: AuthSession = Depends(require_admin),
+    db: OrmSession = Depends(get_db),
+) -> dict:
+    """Save hand-made placements from the 3D preview editor.
+
+    A cloud of this run goes into ``blocks[].placement``; a cloud belonging to
+    another run is recorded in ``placements[]`` as "relative to this run's
+    coordinate system". The 4x4 matrix is always derived from the structured
+    parameters, so transforms.json can never drift away from the editor.
+    """
+    run = db.get(TrainingRun, run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "训练任务不存在")
+
+    data = _load_transforms(run)
+    if not data:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "这个任务还没有 transforms.json，请先跑一次重建"
+        )
+    if not payload.placements:
+        # Nothing to do — don't touch updated_at just because someone hit save
+        return {
+            "ok": True,
+            "saved": 0,
+            "updated_at": data.get("updated_at"),
+            "placement_count": len(data.get("placements") or []),
+        }
+
+    blocks = [block for block in (data.get("blocks") or []) if isinstance(block, dict)]
+    blocks_by_key = {str(block.get("key")): block for block in blocks}
+    merged = data.get("merged") if isinstance(data.get("merged"), dict) else None
+
+    placements: list[dict] = [
+        item for item in (data.get("placements") or []) if isinstance(item, dict)
+    ]
+    placement_index = {(item.get("run_id"), str(item.get("key"))): item for item in placements}
+
+    now = utcnow().isoformat(timespec="seconds")
+    saved = 0
+
+    for item in payload.placements:
+        target_key = str(item.key)
+        if item.run_id is None or item.run_id == run.id:
+            entry = merged if target_key == "merged" else blocks_by_key.get(target_key)
+            if entry is None:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, f"这个任务里没有名为 {target_key} 的点云"
+                )
+            base_pivot = _base_pivot(entry)
+        else:
+            other = db.get(TrainingRun, item.run_id)
+            if other is None:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, f"任务 #{item.run_id} 不存在"
+                )
+            if target_key not in _scene_paths(other):
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"任务 #{item.run_id} 里没有名为 {target_key} 的点云",
+                )
+            other_transforms = _load_transforms(other)
+            other_blocks = {
+                str(block.get("key")): block
+                for block in (other_transforms.get("blocks") or [])
+                if isinstance(block, dict)
+            }
+            other_meta = (
+                other_transforms.get("merged")
+                if target_key == "merged"
+                else other_blocks.get(target_key)
+            )
+            base_pivot = _base_pivot(other_meta)
+
+            entry = placement_index.get((other.id, target_key))
+            if entry is None:
+                block_row = next((b for b in other.blocks if b.key == target_key), None)
+                entry = {
+                    "run_id": other.id,
+                    "run_name": other.name,
+                    "key": target_key,
+                    "name": block_row.name if block_row is not None else other.name,
+                }
+                placements.append(entry)
+                placement_index[(other.id, target_key)] = entry
+
+        placement = splat.sanitize_placement(item.model_dump(), base_pivot)
+        entry["placement"] = placement
+        entry["transform"] = splat.matrix_for_placement(placement)
+        entry["transform_source"] = "manual"
+        entry["transform_updated_at"] = now
+        saved += 1
+
+    data["blocks"] = blocks
+    if merged is not None:
+        data["merged"] = merged
+    data["placements"] = placements
+    data["updated_at"] = now
+
+    manual_count = sum(
+        1
+        for entry in [*blocks, *([merged] if merged else []), *placements]
+        if isinstance(entry, dict) and entry.get("transform_source") == "manual"
+    )
+    if manual_count:
+        alignment = dict(data.get("alignment") or {})
+        alignment["manual_placements"] = manual_count
+        data["alignment"] = alignment
+
+    artifact = next(
+        (item for item in (run.artifacts or []) if item.get("kind") == "transform"),
+        None,
+    )
+    if not artifact or not artifact.get("path"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "找不到 transforms.json 的产物路径")
+    path = storage.resolve(str(artifact["path"]))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    artifact["size_bytes"] = path.stat().st_size
+    run.artifacts = list(run.artifacts or [])
+    db.commit()
+
+    return {
+        "ok": True,
+        "saved": saved,
+        "updated_at": now,
+        "manual": manual_count,
+        "placement_count": len(placements),
+    }
+
+
+@router.get("/training/{run_id}/artifacts/{filename}")
+def training_artifact(
+    run_id: int,
+    filename: str,
+    session: AuthSession = Depends(require_admin),
+    db: OrmSession = Depends(get_db),
+) -> FileResponse:
+    """Stream one point cloud of a run, for the preview.
+
+    The URL deliberately ends in `.ply` — the WebGL loader derives the scene
+    format from the path suffix, so a query string *after* the extension
+    ("...?path=x.ply&token=...") makes it refuse the file. Only keys the run
+    actually produced can be served, so this can't read arbitrary files.
+    """
+    run = db.get(TrainingRun, run_id)
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "训练任务不存在")
+
+    name = Path(filename).name
+    if not name.lower().endswith(".ply"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "只提供 .ply 点云")
+    key = name[: -len(".ply")]
+
+    artifact = _scene_artifacts(run).get(key)
+    if artifact is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "该点云不存在（可能已被清理）")
+
+    resolved = storage.resolve(str(artifact.get("path") or ""))
+    if not resolved.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "点云文件已丢失")
+
+    # No filename: keep this an inline stream for the preview, not a download.
+    return FileResponse(resolved, media_type="application/octet-stream")
+
+
+# ---------------------------------------------------------------- maintenance
+
+
+def _scope_dir(scope: str) -> Path:
+    """One of the well-known data directories, resolved on every call so tests
+    (and a live config change) see the current value."""
+    return {
+        "data": config.DATA_DIR,
+        "uploads": config.UPLOAD_DIR,
+        "thumbs": config.THUMB_DIR,
+        "training": config.TRAINING_DIR,
+        "logs": config.LOG_DIR,
+    }[scope]
+
+
+def _purge_dir(path: Path) -> int:
+    """Empty a data directory, returning how many bytes were removed."""
     if not path.exists():
-        return {"lines": [], "path": run.log_path}
+        return 0
+    freed = 0
+    for child in path.iterdir():
+        try:
+            if child.is_dir():
+                freed += sum(item.stat().st_size for item in child.rglob("*") if item.is_file())
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                freed += child.stat().st_size
+                child.unlink(missing_ok=True)
+        except OSError:
+            continue
+    return freed
 
-    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    return {"lines": lines[-tail:], "path": run.log_path, "total": len(lines)}
+
+@router.post("/reset")
+def reset_everything(
+    payload: ResetIn,
+    session: AuthSession = Depends(require_admin),
+    db: OrmSession = Depends(get_db),
+) -> dict:
+    """Delete every task, checkpoint, photo and training run — files included.
+
+    The admin's own session survives (so the console doesn't log you out), and
+    volunteer logins are dropped because their tasks are gone.
+    """
+    if payload.confirm.strip().upper() != "DELETE":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "确认词不对：请在确认框里输入 DELETE")
+
+    tasks = db.execute(select(Task)).scalars().all()
+    runs = db.execute(select(TrainingRun)).scalars().all()
+    photos = db.execute(select(func.count(Photo.id))).scalar_one() or 0
+
+    # Stop training first: deleting its output under a running job would only
+    # make the job fail confusingly
+    for run in runs:
+        if run.status == "running":
+            manager.cancel(run.id)
+
+    for run in runs:
+        db.delete(run)
+    for task in tasks:
+        db.delete(task)
+    removed_sessions = (
+        db.execute(delete(AuthSession).where(AuthSession.role == "volunteer")).rowcount or 0
+    )
+    db.commit()
+
+    freed = 0
+    for path in (config.UPLOAD_DIR, config.THUMB_DIR, config.TRAINING_DIR, config.LOG_DIR):
+        freed += _purge_dir(path)
+
+    return {
+        "ok": True,
+        "tasks": len(tasks),
+        "photos": photos,
+        "runs": len(runs),
+        "volunteer_sessions": removed_sessions,
+        "freed_bytes": freed,
+    }
+
+
+def _reveal_command(target: Path, *, is_file: bool) -> list[str]:
+    """Command that opens the file manager of the machine running the server."""
+    if sys.platform.startswith("win"):
+        # explorer wants /select,<path> in one argument (no space after the comma)
+        return ["explorer", f"/select,{target}"] if is_file else ["explorer", str(target)]
+    if sys.platform == "darwin":
+        return ["open", "-R", str(target)] if is_file else ["open", str(target)]
+    # Linux/BSD: xdg-open is the portable choice; it opens the folder for files
+    return ["xdg-open", str(target.parent if is_file else target)]
+
+
+@router.post("/reveal")
+def reveal_in_file_manager(
+    payload: RevealIn,
+    session: AuthSession = Depends(require_admin),
+    db: OrmSession = Depends(get_db),
+) -> dict:
+    """Open the server machine's file manager at a photo / task / data folder.
+
+    Only useful when you are sitting at the machine that runs the service; from
+    another computer it still opens it — on that machine, not on yours.
+    """
+    if payload.photo_id is not None:
+        photo = db.get(Photo, payload.photo_id)
+        if photo is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "照片不存在")
+        target = storage.resolve(photo.stored_path)
+        is_file = True
+    elif payload.task_id is not None:
+        task = db.get(Task, payload.task_id)
+        if task is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "任务不存在")
+        target = config.UPLOAD_DIR / f"task{task.id}"
+        is_file = False
+    elif payload.scope is not None:
+        target = _scope_dir(payload.scope)
+        is_file = False
+    elif payload.path:
+        target = storage.resolve(payload.path)
+        is_file = target.is_file()
+    else:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "要指定 photo_id / task_id / scope / path 其中之一"
+        )
+
+    if not target.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"路径不存在：{target}")
+
+    command = _reveal_command(target, is_file=is_file)
+    try:
+        subprocess.Popen(
+            command,
+            shell=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"这台机器上打不开文件管理器（{exc}）—— 无桌面环境时正常",
+        )
+
+    return {"ok": True, "path": str(target), "command": " ".join(command)}

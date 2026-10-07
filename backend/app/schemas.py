@@ -275,11 +275,54 @@ class VolunteerBoardOut(BaseModel):
 # ---------------------------------------------------------------- training
 
 
+class TrainingParamsIn(BaseModel):
+    """Parameters of one reconstruction run (docs/training-pipeline.md).
+
+    Every field maps to something the pipeline script understands, so the admin
+    console can expose the whole graded flow without touching the backend.
+    """
+
+    iterations: int = Field(default=30_000, ge=1_000, le=200_000)
+    # COLMAP feature extraction long side (the SfM stage is RAM-bound)
+    image_resize: int = Field(default=2000, ge=800, le=8000)
+    # Training long side — the first knob to turn when a block runs out of VRAM
+    train_resize: int = Field(default=1600, ge=400, le=8000)
+    toolchain: Literal["3dgs", "gsplat"] = "3dgs"
+    # gsplat only: train on images downsampled by this factor (--data_factor).
+    # First lever when a block runs out of VRAM (docs/training-toolchain.md §二).
+    data_factor: Literal[1, 2, 4] = 1
+    matcher: Literal["auto", "vocab_tree", "sequential", "exhaustive"] = "auto"
+    # A checkpoint with more usable photos than this is cut into several blocks
+    block_max_photos: int = Field(default=600, ge=20, le=5000)
+    merge_blocks: bool = True
+    rtk_align: bool = True
+
+
 class TrainingCreateIn(BaseModel):
     task_id: int | None = None
     name: str | None = Field(default=None, max_length=128)
-    # Free-form parameters passed through to the training script
-    params: dict | None = None
+    params: TrainingParamsIn | None = None
+
+
+class TrainingBlockOut(ORMModel):
+    id: int
+    run_id: int
+    checkpoint_id: int | None
+    order_index: int
+    key: str
+    name: str
+    part_index: int
+    part_total: int
+    photo_count: int
+    status: str
+    stage: str | None
+    progress: float
+    message: str | None
+    output_path: str | None
+    log_path: str | None
+    metrics: dict | None
+    started_at: datetime | None
+    finished_at: datetime | None
 
 
 class TrainingRunOut(ORMModel):
@@ -293,10 +336,120 @@ class TrainingRunOut(ORMModel):
     params: dict | None
     photo_count: int
     output_path: str | None
+    scope_kind: str = "indoor"
+    block_total: int = 0
+    block_done: int = 0
+    artifacts: list[Any] | None = None
+    reuse_run_id: int | None = None
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
     duration_seconds: float | None = None
+
+
+class TrainingRunDetailOut(TrainingRunOut):
+    blocks: list[TrainingBlockOut] = Field(default_factory=list)
+
+
+class TrainingBlockPlanOut(BaseModel):
+    key: str
+    name: str
+    checkpoint_id: int | None
+    part_index: int
+    part_total: int
+    photo_count: int
+
+
+class TrainingPreflightOut(BaseModel):
+    task_id: int
+    task_name: str
+    kind: str
+    photo_count: int
+    gps_photos: int
+    block_max_photos: int
+    blocks: list[TrainingBlockPlanOut] = Field(default_factory=list)
+    estimated_gaussians_per_block: int = 0
+    gaussian_budget: int = 0
+    warnings: list[str] = Field(default_factory=list)
+    # Toolchain readiness for the parameters this preflight was asked about:
+    # which .env variable backs it, whether its command template is usable and
+    # every pitfall of docs/training-toolchain.md the template trips over.
+    toolchain: str = "3dgs"
+    toolchain_env_var: str = ""
+    command_configured: bool = False
+    command_program: str | None = None
+    command_program_available: bool | None = None
+    command_warnings: list[str] = Field(default_factory=list)
+
+
+class TrainingPreviewSceneOut(BaseModel):
+    """One loadable point cloud for the admin preview."""
+
+    key: str
+    name: str
+    url: str
+    # Which run the cloud belongs to; scenes from other runs are what the admin
+    # places by hand against this run's coordinate system
+    run_id: int
+    is_reference: bool = False
+    block_key: str | None = None
+    merged: bool = False
+    gaussians: int = 0
+    size_bytes: int = 0
+    color: list[float] = Field(default_factory=list)
+    # Structured placement (pivot / offset / yaw / scale) plus the matrix derived
+    # from it, so the editor can bind straight to numbers
+    placement: dict = Field(default_factory=dict)
+    transform: list[list[float]] = Field(default_factory=list)
+    transform_source: str = "identity"
+
+
+class TrainingPreviewOut(BaseModel):
+    run_id: int
+    name: str
+    status: str
+    coordinate_system: str
+    scenes: list[TrainingPreviewSceneOut] = Field(default_factory=list)
+
+
+class PlacementIn(BaseModel):
+    """One placement written back from the 3D preview editor."""
+
+    key: str = Field(min_length=1, max_length=64)
+    # NULL = a block of this run; otherwise the run the cloud belongs to
+    run_id: int | None = None
+    offset: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0], min_length=3, max_length=3)
+    # ZYX Euler angles in radians (pitch = around X, yaw = around Y, roll = around Z)
+    yaw: float = 0.0
+    pitch: float = 0.0
+    roll: float = 0.0
+    scale: float = 1.0
+
+
+class TransformUpdateIn(BaseModel):
+    placements: list[PlacementIn] = Field(default_factory=list, max_length=200)
+
+
+# ---------------------------------------------------------------- maintenance
+
+
+class ResetIn(BaseModel):
+    """Wipe everything. The confirm word keeps a stray click from doing it."""
+
+    confirm: str = Field(min_length=1, max_length=32)
+
+
+class RevealIn(BaseModel):
+    """Where the *server machine's* file manager should open.
+
+    Give one of these; paths are resolved against the data roots, so this can't
+    be used to browse the rest of the disk.
+    """
+
+    photo_id: int | None = None
+    task_id: int | None = None
+    scope: Literal["data", "uploads", "thumbs", "training", "logs"] | None = None
+    path: str | None = Field(default=None, max_length=1024)
 
 
 OverviewOut.model_rebuild()

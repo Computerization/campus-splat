@@ -7,12 +7,17 @@ import type {
   Photo,
   PhotoPage,
   PhotoStatus,
+  PlacementUpdate,
   Session,
   SystemInfo,
   Task,
   TaskDetail,
   TaskProgress,
+  TrainingParams,
+  TrainingPreview,
+  TrainingPreflight,
   TrainingRun,
+  TrainingRunDetail,
   UploadBatch,
 } from './types'
 
@@ -199,16 +204,69 @@ export const api = {
 
   // ---- admin: training
   trainingRuns: (limit = 30) => request<TrainingRun[]>(`/api/admin/training?limit=${limit}`),
-  createTrainingRun: (payload: { task_id?: number; name?: string; params?: Record<string, unknown> }) =>
-    request<TrainingRun>('/api/admin/training', { method: 'POST', ...json(payload) }),
+  trainingRun: (id: number) => request<TrainingRunDetail>(`/api/admin/training/${id}`),
+  trainingPreflight: (taskId: number, params: Partial<TrainingParams> = {}) => {
+    const query = new URLSearchParams({ task_id: String(taskId) })
+    if (params.block_max_photos) query.set('block_max_photos', String(params.block_max_photos))
+    // The trainer parameters decide which command template (and which of its
+    // pitfalls) the preflight reports on
+    if (params.toolchain) query.set('toolchain', params.toolchain)
+    if (params.data_factor) query.set('data_factor', String(params.data_factor))
+    if (params.iterations) query.set('iterations', String(params.iterations))
+    return request<TrainingPreflight>(`/api/admin/training/preflight?${query.toString()}`)
+  },
+  createTrainingRun: (payload: {
+    task_id: number
+    name?: string
+    params?: Partial<TrainingParams>
+  }) => request<TrainingRunDetail>('/api/admin/training', { method: 'POST', ...json(payload) }),
   cancelTrainingRun: (id: number) =>
-    request<TrainingRun>(`/api/admin/training/${id}/cancel`, { method: 'POST' }),
+    request<TrainingRunDetail>(`/api/admin/training/${id}/cancel`, { method: 'POST' }),
   trainingLog: (id: number, tail = 200) =>
     request<{ lines: string[]; path: string | null; total?: number }>(
       `/api/admin/training/${id}/log?tail=${tail}`,
     ),
+  trainingBlockLog: (blockId: number, tail = 300) =>
+    request<{ lines: string[]; path: string | null; total?: number; block_id: number }>(
+      `/api/admin/training/blocks/${blockId}/log?tail=${tail}`,
+    ),
+  retryTrainingBlock: (blockId: number) =>
+    request<TrainingRunDetail>(`/api/admin/training/blocks/${blockId}/retry`, { method: 'POST' }),
+  trainingPreview: (runId: number, withRuns: number[] = []) =>
+    request<TrainingPreview>(
+      `/api/admin/training/${runId}/preview` +
+        (withRuns.length ? `?with_runs=${withRuns.join(',')}` : ''),
+    ),
+  updateTrainingTransforms: (runId: number, placements: PlacementUpdate[]) =>
+    request<{
+      ok: boolean
+      saved: number
+      updated_at: string | null
+      /** Omitted by the backend when an empty save is a no-op */
+      manual?: number
+      placement_count: number
+    }>(`/api/admin/training/${runId}/transforms`, {
+      method: 'PUT',
+      ...json({ placements }),
+    }),
   pruneSessions: () =>
     request<{ ok: boolean; removed: number }>('/api/admin/prune-sessions', { method: 'POST' }),
+
+  // ---- admin: maintenance
+  reveal: (payload: { photo_id?: number; task_id?: number; scope?: string; path?: string }) =>
+    request<{ ok: boolean; path: string; command: string }>('/api/admin/reveal', {
+      method: 'POST',
+      ...json(payload),
+    }),
+  resetAll: (confirm: string) =>
+    request<{
+      ok: boolean
+      tasks: number
+      photos: number
+      runs: number
+      volunteer_sessions: number
+      freed_bytes: number
+    }>('/api/admin/reset', { method: 'POST', ...json({ confirm }) }),
 }
 
 /** Upload with progress events (fetch can't report upload progress, XHR can). */

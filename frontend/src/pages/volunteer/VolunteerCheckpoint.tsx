@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../../api'
 import { Badge, ErrorBox, ProgressBar, Spinner, formatDateTime, useAsync } from '../../components/common'
+import { ShootingTips } from '../../components/ShotGuide'
 import { issueLabel, useI18n } from '../../i18n'
 import type { CheckpointProgress, UploadBatch, UploadResult } from '../../types'
 
@@ -118,6 +119,8 @@ export default function VolunteerCheckpoint() {
             )}
           </div>
         )}
+
+        <ShootingTips />
 
         {data.reference_url && (
           <div className="card">

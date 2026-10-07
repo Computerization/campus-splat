@@ -128,6 +128,26 @@ export THREEDGS_ADMIN_PASSWORD="your-own-password"
 
 Precedence: **process environment variable > `.env` > the built-in default**.
 
+## Where the data lives, and starting over
+
+`data/` holds everything: photos, the SQLite database, training output and logs. Two settings move it around:
+
+| Want to | Set |
+|---|---|
+| Put everything on a big disk | `THREEDGS_DATA_DIR=E:\campus-splat-data` |
+| Keep only the photos elsewhere (they are the bulky part) | `THREEDGS_UPLOAD_DIR=F:\campus-photos` |
+
+With an external photo folder the database stores absolute paths, so moving that disk later means updating the variable too.
+
+**Opening folders:** the admin console has 📂 buttons (System page: data / photo folders; task detail: that task's photos; photo review: show the selected photo). They open the file manager **on the machine running the server** — clicking from your laptop still opens it on the server, not on your laptop.
+
+**Starting over:** the System page has a red *清空全部数据 / Delete all data* button (type `DELETE` to confirm) — it removes every task, checkpoint, photo and training run, files included, while keeping your admin login. Same thing from the command line:
+
+```powershell
+uv run python backend\scripts\reset_data.py           # shows what would go, then asks
+uv run python backend\scripts\reset_data.py --yes     # no prompt
+```
+
 ## How volunteers and admins use it
 
 ### Volunteers — open `/v` on a phone
@@ -143,7 +163,7 @@ Precedence: **process environment variable > `.env` > the built-in default**.
 - **Overview** — global progress, disk usage, training status; auto-refreshes every 10s
 - **Tasks & checkpoints** — create tasks, hand out access codes (or copy a ready-made join link), bulk-import checkpoints, upload reference images, and let the form **estimate how many photos a checkpoint needs from the room's dimensions** (length × width × height; the estimate is only a suggestion and can always be overridden by hand)
 - **Photo review** — filter by task / status / duplicates, search, download originals, export a CSV manifest, and manually override the quality verdict when the heuristic gets it wrong
-- **Training** — queue, start and cancel reconstruction jobs; watch the stage progress and live log
+- **Training** — the graded pipeline of [`docs/training-pipeline.md`](docs/training-pipeline.md): pick a task, see the **block plan** (one block per room, oversized rooms split further) and the VRAM risk *before* starting, then watch the stages (one COLMAP per building → per-room blocks → merge → align → export). Failed blocks can be retried on their own, reusing the poses that were already solved. Produced point clouds open in a **3D preview that is also a placement editor**: load an outdoor run next to an indoor one, then drag / rotate / scale the blocks into place (or type exact position, X/Y/Z rotation and scale) — two independent COLMAP solves share no features, so this step can never be automatic, and the result is saved as a similarity transform in `transforms.json`. No capture material yet? `uv run python backend/scripts/seed_demo.py` builds demo tasks, synthetic photos and two mock runs, then prints the preview URL. Going real on the 3090 machine: [`docs/training-toolchain.md`](docs/training-toolchain.md) — which trainer to install, the exact `.env` command template for each, and the pitfalls that break unattended runs. gsplat (method A) comes with a one-click installer (`powershell -ExecutionPolicy Bypass -File scripts\setup_gsplat.ps1`), a VRAM-downsampling knob on the training page, and the console's *Status* / block preflight check the command template of whichever toolchain is selected — including the `--save_ply` default that would otherwise end a run with "训练结束但没有找到 .ply"
 - **System** — server hardware (CPU / RAM / GPU and driver), plus **live gauges for CPU, memory, GPU, VRAM and disk** and a per-core load chart
 
 The interface is available in **Chinese and English** (switchable from the landing page, the admin sidebar, and the volunteer header).
@@ -174,6 +194,7 @@ campus-splat/
 ├─ start-server.cmd          One-click launcher — Windows
 ├─ start-server.sh           One-click launcher — macOS / Linux
 ├─ scripts/serve.py          Launcher logic: env check, frontend check, LAN addresses
+├─ scripts/setup_gsplat.ps1   One-click gsplat install (method A of the toolchain doc)
 ├─ backend/                  FastAPI backend
 │  ├─ app/
 │  │  ├─ main.py             App entry point (also serves the built frontend)
@@ -181,12 +202,17 @@ campus-splat/
 │  │  ├─ models.py           Task / Checkpoint / Photo / QualityReport / TrainingRun
 │  │  ├─ quality/            Heuristic quality engine
 │  │  ├─ routers/            auth · admin · volunteer · media
-│  │  └─ services/           Ingest, stats, training scheduler, system metrics
-│  ├─ scripts/run_training.py   COLMAP + 3DGS entry point (with a mock mode)
+│  │  └─ services/           Ingest, stats, training pipeline, point-cloud
+│  │                         plumbing (splat.py), system metrics
+│  ├─ scripts/run_training.py   The graded pipeline: COLMAP per scope → block
+│  │                           split → 3DGS per block → merge/align/export
+│  │                           (with a mock mode that walks the same stages)
+│  ├─ scripts/seed_demo.py      Demo data for the preview: synthetic photos →
+│  │                           tasks → uploads → two mock runs
 │  └─ tests/                 pytest suite
 ├─ frontend/                 React + Vite + TypeScript
 │  ├─ dist/                  Build output — committed on purpose
 │  └─ src/pages/             admin/ (desktop) and volunteer/ (phone)
 ├─ data/                     Runtime data: photos, SQLite DB, training output (git-ignored)
-└─ docs/                     Drone selection guide, deployment notes
+└─ docs/                     Pipeline design, trainer setup for the 3090 box, drone selection, deployment
 ```

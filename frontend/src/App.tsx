@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './auth'
 import { Spinner } from './components/common'
@@ -14,6 +15,10 @@ import VolunteerBoard from './pages/volunteer/VolunteerBoard'
 import VolunteerCheckpoint from './pages/volunteer/VolunteerCheckpoint'
 import VolunteerJoin from './pages/volunteer/VolunteerJoin'
 import VolunteerMine from './pages/volunteer/VolunteerMine'
+
+// Lazy: the 3DGS viewer pulls in three.js (about 1 MB), and volunteers on a
+// phone should never download it just to open the upload page.
+const AdminTrainingPreview = lazy(() => import('./pages/admin/AdminTrainingPreview'))
 
 function RequireAdmin({ children }: { children: JSX.Element }) {
   const { isAdmin, ready } = useAuth()
@@ -81,6 +86,14 @@ export default function App() {
         <Route path="tasks/:id" element={<AdminTaskDetail />} />
         <Route path="photos" element={<AdminPhotos />} />
         <Route path="training" element={<AdminTraining />} />
+        <Route
+          path="training/:runId/preview"
+          element={
+            <Suspense fallback={<Spinner />}>
+              <AdminTrainingPreview />
+            </Suspense>
+          }
+        />
         <Route path="system" element={<AdminSystem />} />
       </Route>
 

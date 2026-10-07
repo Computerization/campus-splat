@@ -161,14 +161,153 @@ export interface TrainingRun {
   stage: string | null
   progress: number
   message: string | null
-  params: Record<string, unknown> | null
+  params: TrainingParams | Record<string, unknown> | null
   photo_count: number
   output_path: string | null
+  scope_kind: 'indoor' | 'outdoor' | 'mixed'
+  block_total: number
+  block_done: number
+  artifacts: TrainingArtifact[] | null
+  reuse_run_id: number | null
   created_at: string
   started_at: string | null
   finished_at: string | null
   duration_seconds: number | null
   created_by?: string | null
+}
+
+export type TrainingBlockStatus =
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled'
+
+/** One training chunk: a room / corridor sharing the run's single COLMAP model. */
+export interface TrainingBlock {
+  id: number
+  run_id: number
+  checkpoint_id: number | null
+  order_index: number
+  key: string
+  name: string
+  part_index: number
+  part_total: number
+  photo_count: number
+  status: TrainingBlockStatus
+  stage: string | null
+  progress: number
+  message: string | null
+  output_path: string | null
+  log_path: string | null
+  metrics: { gaussians?: number; size_bytes?: number } | null
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface TrainingArtifact {
+  kind: 'ply' | 'transform' | 'manifest' | string
+  name: string
+  /** Path relative to the data directory (never served as a download) */
+  path: string
+  size_bytes: number
+  gaussians?: number
+  block_key?: string | null
+  block_name?: string
+  merged?: boolean
+}
+
+export interface TrainingRunDetail extends TrainingRun {
+  blocks: TrainingBlock[]
+}
+
+export interface TrainingParams {
+  iterations: number
+  image_resize: number
+  train_resize: number
+  toolchain: '3dgs' | 'gsplat'
+  /** gsplat only: train on images downsampled by this factor (--data_factor) */
+  data_factor: 1 | 2 | 4
+  matcher: 'auto' | 'vocab_tree' | 'sequential' | 'exhaustive'
+  block_max_photos: number
+  merge_blocks: boolean
+  rtk_align: boolean
+}
+
+export interface TrainingBlockPlan {
+  key: string
+  name: string
+  checkpoint_id: number | null
+  part_index: number
+  part_total: number
+  photo_count: number
+}
+
+export interface TrainingPreflight {
+  task_id: number
+  task_name: string
+  kind: 'indoor' | 'outdoor'
+  photo_count: number
+  gps_photos: number
+  block_max_photos: number
+  blocks: TrainingBlockPlan[]
+  estimated_gaussians_per_block: number
+  gaussian_budget: number
+  warnings: string[]
+  /** Which trainer command the selected toolchain reads, and whether it is usable */
+  toolchain: '3dgs' | 'gsplat'
+  toolchain_env_var: string
+  command_configured: boolean
+  command_program: string | null
+  command_program_available: boolean | null
+  command_warnings: string[]
+}
+
+export interface TrainingPreviewScene {
+  key: string
+  name: string
+  url: string
+  run_id: number
+  is_reference: boolean
+  block_key: string | null
+  merged: boolean
+  gaussians: number
+  size_bytes: number
+  color: number[]
+  placement: Placement
+  transform: number[][]
+  transform_source: 'identity' | 'manual' | string
+}
+
+/** Structured placement: T(pivot + offset) · R(pitch,yaw,roll) · S(scale) · T(-pivot). */
+export interface Placement {
+  pivot: [number, number, number] | number[]
+  offset: [number, number, number] | number[]
+  /** Radians. ZYX order: Rz(roll) · Ry(yaw) · Rx(pitch) */
+  yaw: number
+  pitch: number
+  roll: number
+  scale: number
+}
+
+export interface PlacementUpdate {
+  key: string
+  /** NULL / omitted = a cloud of the run being edited, otherwise its owner */
+  run_id?: number | null
+  offset: number[]
+  yaw: number
+  pitch: number
+  roll: number
+  scale: number
+}
+
+export interface TrainingPreview {
+  run_id: number
+  name: string
+  status: TrainingStatus
+  coordinate_system: string
+  scenes: TrainingPreviewScene[]
 }
 
 export interface Overview {
@@ -206,6 +345,14 @@ export interface HardwareInfo {
   python_version: string
 }
 
+export interface ToolchainStatus {
+  /** The .env variable this toolchain reads (doc §二 「接进网站」) */
+  env_var: string
+  configured: boolean
+  program: string | null
+  program_available: boolean | null
+}
+
 export interface SystemInfo {
   hardware: HardwareInfo
   data_dir: string
@@ -221,6 +368,10 @@ export interface SystemInfo {
     cancelled: number
     max_concurrent: number
     script_configured: boolean
+    mode: 'mock' | 'real'
+    colmap_configured: boolean
+    vocab_tree_configured: boolean
+    toolchains: Record<'3dgs' | 'gsplat', ToolchainStatus>
   }
 }
 

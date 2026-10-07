@@ -256,6 +256,21 @@ export default function AdminPhotos() {
               </a>
               <button
                 type="button"
+                className="btn btn-ghost"
+                onClick={async () => {
+                  try {
+                    const result = await api.reveal({ photo_id: selected.id })
+                    setToast(t('admin.photos.revealed', { path: result.path }))
+                  } catch (err) {
+                    setToast(String(err))
+                  }
+                  window.setTimeout(() => setToast(null), 4000)
+                }}
+              >
+                📂 {t('admin.photos.reveal')}
+              </button>
+              <button
+                type="button"
                 className="btn btn-primary"
                 onClick={() => void review(selected, selected.status === 'rejected' ? 'ok' : 'rejected')}
               >

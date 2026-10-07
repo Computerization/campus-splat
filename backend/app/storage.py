@@ -45,6 +45,20 @@ def check_extension(filename: str) -> str:
     return ext
 
 
+def _upload_prefix() -> str | None:
+    """UPLOAD_DIR relative to DATA_DIR, or None when it lives elsewhere.
+
+    With the default layout this is "uploads", so stored paths keep exactly the
+    shape they have always had ("uploads/task3/cp5/abc.jpg"). When the photos
+    live on another disk there is no relative form, and the absolute path is
+    stored instead.
+    """
+    try:
+        return config.UPLOAD_DIR.relative_to(config.DATA_DIR).as_posix()
+    except ValueError:
+        return None
+
+
 def save_stream(
     fileobj,
     *,
@@ -61,12 +75,16 @@ def save_stream(
     config.ensure_dirs()
     ext = check_extension(filename)
 
-    folder = Path("uploads") / f"task{task_id}" / (f"cp{checkpoint_id}" if checkpoint_id else "unassigned")
-    abs_folder = config.DATA_DIR / folder
+    folder = Path(f"task{task_id}") / (f"cp{checkpoint_id}" if checkpoint_id else "unassigned")
+    abs_folder = config.UPLOAD_DIR / folder
     abs_folder.mkdir(parents=True, exist_ok=True)
 
-    rel = folder / _new_name(ext)
-    abs_path = config.DATA_DIR / rel
+    name = _new_name(ext)
+    abs_path = abs_folder / name
+    prefix = _upload_prefix()
+    stored = (
+        (Path(prefix) / folder / name).as_posix() if prefix is not None else str(abs_path)
+    )
 
     digest = hashlib.sha256()
     size = 0
@@ -95,7 +113,7 @@ def save_stream(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "上传的文件是空的")
 
     return SavedFile(
-        rel_path=rel.as_posix(),
+        rel_path=stored,
         abs_path=abs_path,
         sha256=digest.hexdigest(),
         size_bytes=size,
@@ -116,7 +134,7 @@ def make_derivatives(rel_path: str, *, prefix: str) -> tuple[str | None, str | N
     """Build the thumbnail and preview. Returns None on failure rather than
     blocking the upload.
     """
-    src = config.DATA_DIR / rel_path
+    src = resolve(rel_path)
     thumb_rel: str | None = None
     preview_rel: str | None = None
     try:
@@ -148,10 +166,29 @@ def is_browser_viewable(rel_path: str) -> bool:
 
 
 def resolve(rel_path: str) -> Path:
-    """Turn a stored relative path back into an absolute one, rejecting
-    directory traversal.
+    """Turn a stored path into an absolute one, rejecting anything outside the
+    data roots.
+
+    Stored paths are normally relative to the data directory
+    ("uploads/task3/cp5/abc.jpg"), but when the photos live on another disk
+    (`THREEDGS_UPLOAD_DIR`) they are absolute — those are accepted only when they
+    really sit under one of the configured roots.
     """
-    candidate = (config.DATA_DIR / rel_path).resolve()
+    raw = Path(rel_path)
+    roots = (
+        config.DATA_DIR,
+        config.UPLOAD_DIR,
+        config.THUMB_DIR,
+        config.TRAINING_DIR,
+        config.LOG_DIR,
+    )
+    if raw.is_absolute():
+        candidate = raw.resolve()
+        if any(candidate.is_relative_to(root.resolve()) for root in roots):
+            return candidate
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "非法路径")
+
+    candidate = (config.DATA_DIR / raw).resolve()
     data_root = config.DATA_DIR.resolve()
     if not candidate.is_relative_to(data_root):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "非法路径")

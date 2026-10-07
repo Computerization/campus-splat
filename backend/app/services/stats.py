@@ -200,19 +200,5 @@ def training_queue_depth(db: OrmSession) -> int:
     )
 
 
-def eligible_photo_count(db: OrmSession, task_id: int) -> int:
-    """Photos that may go into training (duplicates and rejects excluded)."""
-    return (
-        db.execute(
-            select(func.count(Photo.id)).where(
-                Photo.task_id == task_id,
-                Photo.status.in_(USABLE_STATUSES),
-                Photo.duplicate_of.is_(None),
-            )
-        ).scalar_one()
-        or 0
-    )
-
-
 def training_concurrency_limit() -> int:
     return max(1, config.TRAINING_MAX_CONCURRENT)

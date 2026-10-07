@@ -5,7 +5,9 @@
            └─ Photo (uploaded by a volunteer)
                 └─ QualityReport (heuristic quality check result)
 
-    TrainingRun (a 3DGS reconstruction job) hangs off a Task.
+    TrainingRun (one reconstruction job, see docs/training-pipeline.md)
+      └─ TrainingBlock (one training chunk: a room / corridor, sharing the
+                        poses of the run's single SfM reconstruction)
 """
 
 from __future__ import annotations
@@ -196,8 +198,12 @@ class QualityReport(Base):
 
 
 class TrainingRun(Base):
-    """One 3DGS job. The backend only queues and tracks state; the heavy lifting
-    happens in the training script.
+    """One reconstruction job (a whole pipeline, not a single tool invocation).
+
+    The run walks the stages of docs/training-pipeline.md: prepare → sfm (one
+    COLMAP per building) → split (one block per room/corridor) → train (one 3DGS
+    per block) → merge → align → export. The backend only orchestrates; the
+    heavy lifting happens in backend/scripts/run_training.py.
     """
 
     __tablename__ = "training_runs"
@@ -209,7 +215,7 @@ class TrainingRun(Base):
     name: Mapped[str] = mapped_column(String(128))
     # queued | running | succeeded | failed | cancelled
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
-    # Current stage, e.g. preparing / colmap_mapping / gs_training / export
+    # Current stage, e.g. prepare / sfm_mapping / train / merge / export
     stage: Mapped[str | None] = mapped_column(String(64))
     progress: Mapped[float] = mapped_column(Float, default=0.0)  # 0-100
     message: Mapped[str | None] = mapped_column(Text)
@@ -217,9 +223,73 @@ class TrainingRun(Base):
     photo_count: Mapped[int] = mapped_column(Integer, default=0)
     log_path: Mapped[str | None] = mapped_column(String(512))
     output_path: Mapped[str | None] = mapped_column(String(512))
+    # indoor | outdoor | mixed — decides the matcher and whether RTK alignment runs
+    scope_kind: Mapped[str] = mapped_column(String(16), default="indoor")
+    # Number of training blocks (rooms) planned for this run
+    block_total: Mapped[int] = mapped_column(Integer, default=0)
+    block_done: Mapped[int] = mapped_column(Integer, default=0)
+    # [{"kind": "ply"|"transform"|"manifest", "name": ..., "path": ...,
+    #   "size_bytes": ..., "block_key": ...|None}]
+    artifacts: Mapped[list | None] = mapped_column(JSON)
+    # Reuse an earlier run's SfM result (used when retrying a single block)
+    reuse_run_id: Mapped[int | None] = mapped_column(Integer)
     created_by: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     task: Mapped["Task | None"] = relationship()
+    blocks: Mapped[list["TrainingBlock"]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="TrainingBlock.order_index",
+    )
+
+
+class TrainingBlock(Base):
+    """One training chunk.
+
+    Every block of a run shares the *same* COLMAP reconstruction, so the poses
+    (and therefore the coordinate system) of all blocks are identical — merging
+    them back together needs no registration at all.
+    """
+
+    __tablename__ = "training_blocks"
+    __table_args__ = (Index("ix_training_blocks_run_order", "run_id", "order_index"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("training_runs.id", ondelete="CASCADE"), index=True
+    )
+    # Source checkpoint (room / corridor / stairwell); NULL for photos that were
+    # never assigned to a checkpoint
+    checkpoint_id: Mapped[int | None] = mapped_column(
+        ForeignKey("checkpoints.id", ondelete="SET NULL"), index=True
+    )
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
+    # Stable key used between the backend and the training script
+    key: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    # A checkpoint with more photos than the block limit is split into parts
+    part_index: Mapped[int] = mapped_column(Integer, default=0)
+    part_total: Mapped[int] = mapped_column(Integer, default=1)
+    photo_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Photo ids of this block, in training order. Frozen when the run is queued
+    # so the block plan the admin saw is exactly the one that gets trained.
+    photo_ids: Mapped[list | None] = mapped_column(JSON)
+
+    # queued | running | succeeded | failed | skipped | cancelled
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    stage: Mapped[str | None] = mapped_column(String(64))
+    progress: Mapped[float] = mapped_column(Float, default=0.0)
+    message: Mapped[str | None] = mapped_column(Text)
+    output_path: Mapped[str | None] = mapped_column(String(512))
+    log_path: Mapped[str | None] = mapped_column(String(512))
+    # {"gaussians": 123456, "size_bytes": 12_345_678}
+    metrics: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    run: Mapped["TrainingRun"] = relationship(back_populates="blocks")
+    checkpoint: Mapped["Checkpoint | None"] = relationship()
