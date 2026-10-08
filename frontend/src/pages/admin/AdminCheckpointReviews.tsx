@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Badge, Card, ErrorBox, Spinner, useAsync, usePolling } from '../../components/common'
+import { Badge, Card, ErrorBox, ProgressBar, Spinner, useAsync, usePolling } from '../../components/common'
 import { api } from '../../api'
 import { useI18n } from '../../i18n'
 import type {
@@ -59,6 +59,18 @@ function SolvePanel({
   const status = summary?.status ?? 'none'
   const running = status === 'queued' || status === 'running'
   const tooFewPhotos = detail.usable_photos < 12
+  const etaSeconds = summary?.eta_s ?? null
+  const etaText =
+    etaSeconds === null
+      ? null
+      : etaSeconds < 60
+        ? t('admin.solve.etaSeconds', { seconds: Math.max(1, etaSeconds) })
+        : etaSeconds < 3600
+          ? t('admin.solve.etaMinutes', { minutes: Math.round(etaSeconds / 60) })
+          : t('admin.solve.etaHours', {
+              hours: Math.floor(etaSeconds / 3600),
+              minutes: Math.round((etaSeconds % 3600) / 60),
+            })
 
   async function start() {
     if (!window.confirm(t('admin.solve.confirm'))) return
@@ -101,6 +113,21 @@ function SolvePanel({
       {error ? <ErrorBox error={error} /> : null}
       {tooFewPhotos ? (
         <p className="hint">{t('admin.solve.needPhotos', { count: 12 })}</p>
+      ) : null}
+
+      {/* 真机上这一步是分钟级的：给进度条和预计剩余时间，别让人对着转圈等 */}
+      {running ? (
+        <div style={{ marginTop: 12 }}>
+          <ProgressBar value={summary?.progress ?? 0} height={10} />
+          <p className="small muted" style={{ marginTop: 6, marginBottom: 0 }}>
+            {t('admin.solve.progress', {
+              stage: t(`admin.solve.stage.${summary?.stage ?? 'prepare'}` as never),
+              percent: summary?.progress ?? 0,
+            })}
+            {' · '}
+            {etaText ? t('admin.solve.eta', { time: etaText }) : t('admin.solve.etaPending')}
+          </p>
+        </div>
       ) : null}
 
       {!summary ? (

@@ -384,6 +384,16 @@ class TrainingBlockPlanOut(BaseModel):
     photo_count: int
 
 
+class SolveActivityOut(BaseModel):
+    """一个正在试解算的点位（训练发起前的资源提示，见 services/recon.py）。"""
+    checkpoint_id: int
+    name: str
+    task_name: str
+    status: str            # queued | running
+    progress: int = 0      # 0-100
+    eta_s: int | None = None
+
+
 class TrainingPreflightOut(BaseModel):
     task_id: int
     task_name: str
@@ -404,6 +414,8 @@ class TrainingPreflightOut(BaseModel):
     command_program: str | None = None
     command_program_available: bool | None = None
     command_warnings: list[str] = Field(default_factory=list)
+    # 正在试解算的点位：训练前提示一下算力占用（只提醒，不拦）
+    active_solves: list[SolveActivityOut] = Field(default_factory=list)
 
 
 class TrainingPreviewSceneOut(BaseModel):

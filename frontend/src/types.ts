@@ -282,6 +282,15 @@ export interface TrainingPreflight {
   command_program: string | null
   command_program_available: boolean | null
   command_warnings: string[]
+  /** 正在试解算的点位：训练前提示算力占用（只提醒，不拦） */
+  active_solves: {
+    checkpoint_id: number
+    name: string
+    task_name: string
+    status: 'queued' | 'running'
+    progress: number
+    eta_s: number | null
+  }[]
 }
 
 export interface TrainingPreviewScene {
@@ -431,14 +440,6 @@ export interface TaskDetail {
   checkpoints: CheckpointProgress[]
 }
 
-export interface Board {
-  task: Task
-  checkpoints: CheckpointProgress[]
-  nickname: string | null
-  my_photo_count: number
-  my_ok_count: number
-}
-
 export interface CheckpointDetail {
   checkpoint: CheckpointProgress
   task: { id: number; name: string; kind: string }
@@ -520,6 +521,12 @@ export interface SolveSummary {
   mean_error_px: number | null
   elapsed_s: number | null
   finished_at: string | null
+  /** Live progress while it runs: 0-100, which stage, seconds still expected */
+  progress: number
+  stage: string | null
+  eta_s: number | null
+  /** data/recon/<任务>/<点位>/ — kept after the run, for working out what failed */
+  work_dir: string | null
 }
 
 /** The whole report produced by services/recon.py. */

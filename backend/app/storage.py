@@ -255,6 +255,9 @@ def disk_usage() -> dict:
     seen: set[tuple[int, int]] = set()
     photos = tree_bytes(config.UPLOAD_DIR, seen)
     training = tree_bytes(config.TRAINING_DIR, seen)
+    # Trial-reconstruction working directories: kept after each run, and the input
+    # photos are hard links, so they share the same `seen` set.
+    recon = tree_bytes(config.RECON_DIR, seen)
     thumbnails = tree_bytes(config.THUMB_DIR, seen)
     logs = tree_bytes(config.LOG_DIR, seen)
     return {
@@ -262,7 +265,8 @@ def disk_usage() -> dict:
         "free_bytes": usage.free,
         "photos_bytes": photos,
         "training_bytes": training,
+        "recon_bytes": recon,
         "thumbnails_bytes": thumbnails,
         "logs_bytes": logs,
-        "managed_bytes": photos + training + thumbnails + logs,
+        "managed_bytes": photos + training + recon + thumbnails + logs,
     }

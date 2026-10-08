@@ -92,6 +92,11 @@ def _solve_summary(checkpoint: Checkpoint) -> dict | None:
         "mean_error_px": report.get("mean_error_px"),
         "elapsed_s": report.get("elapsed_s"),
         "finished_at": checkpoint.solve_finished_at.isoformat() + "Z" if checkpoint.solve_finished_at else None,
+        # Live progress while it runs (see services/recon.py)
+        "progress": checkpoint.solve_progress or 0,
+        "stage": checkpoint.solve_stage,
+        "eta_s": checkpoint.solve_eta_s,
+        "work_dir": report.get("work_dir"),
     }
 
 

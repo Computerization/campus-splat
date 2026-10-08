@@ -9,20 +9,25 @@ The review page asks three things, and this module answers all of them:
   a `checks` list with a good/warn/bad level per indicator).
 * **哪里要补拍** — rule-based advice for the volunteer (`suggestions`).
 
-The trial is deliberately isolated from the real run: it works in its own
-throwaway directory under ``data/recon/<checkpoint>/``, keeps only the JSON
-report, and its model is never reused by training. COLMAP is non-deterministic
-(and a trial that fed the real solve would make both harder to trust), so treat
-the report as evidence for a human decision, not a promise.
+Working directory: ``data/recon/<任务 folder>/<点位 folder>/``, the same layered
+naming as training output, so a glance at the tree says which checkpoint it
+belongs to. It is **kept** after the run (the report carries the path) because
+"why did this one fail" is a question that gets asked the next morning; the JSON
+report is the part the UI reads.
 
-One worker at a time, like the quality queue: a solve eats CPU/RAM/GPU and must
-not run next to a real training job.
+The trial stays isolated from the real run: its model is never reused by training,
+because COLMAP is non-deterministic and mixing the two would make both harder to
+trust. Treat the report as evidence for a human decision, not a promise.
+
+One worker at a time, like the quality queue: a solve eats CPU/RAM/GPU. Progress
+and a time estimate go to the database as the stages run, so the console can show
+a bar instead of a spinner.
 """
 
 from __future__ import annotations
 
-import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -36,7 +41,8 @@ from sqlalchemy.orm import Session as OrmSession
 
 from .. import config, storage
 from ..database import SessionLocal
-from ..models import Checkpoint, Photo, utcnow
+from ..models import Checkpoint, Photo, Task, utcnow
+from . import naming
 
 SOLVE_NONE = "none"
 SOLVE_QUEUED = "queued"
@@ -48,10 +54,32 @@ SOLVE_FAILED = "failed"
 # on; ones still being checked have no verdict yet.
 _SKIPPED_STATUSES = ("rejected", "checking")
 
+# COLMAP's three stages take wildly different amounts of time, so the bar moves by
+# experience-based weights rather than by stage count: feature extraction, feature
+# matching, incremental reconstruction. A room that takes 8 minutes spends most of
+# it in the mapper.
+STAGES: dict[str, tuple[str, float, float]] = {
+    "feature_extractor": ("features", 2.0, 30.0),
+    "exhaustive_matcher": ("match", 30.0, 72.0),
+    "mapper": ("map", 72.0, 100.0),
+}
 
-def recon_dir(checkpoint_id: int) -> Path:
-    """Throwaway working directory of one trial solve."""
-    return config.DATA_DIR / "recon" / str(checkpoint_id)
+# Within a stage COLMAP prints a counter; matching it makes the bar move smoothly.
+# Anything that does not match simply leaves the stage-level percentage alone.
+_PROGRESS_PATTERNS: dict[str, re.Pattern[str]] = {
+    "feature_extractor": re.compile(r"Processed file \[(\d+)/(\d+)\]"),
+    "exhaustive_matcher": re.compile(r"Matching block \[(\d+)/(\d+)\]"),
+    "mapper": re.compile(r"Registering image #(\d+)"),
+}
+
+
+def recon_dir(task: Task, checkpoint: Checkpoint) -> Path:
+    """``data/recon/<任务 folder>/<点位 folder>/`` — readable, one per checkpoint."""
+    task_folder = task.folder or naming.normalize(task.name, fallback=f"Task{task.id}")
+    checkpoint_folder = checkpoint.folder or naming.normalize(
+        checkpoint.name, fallback=f"Checkpoint{checkpoint.id}"
+    )
+    return config.DATA_DIR / "recon" / task_folder / checkpoint_folder
 
 
 def _gpu_flag() -> str:
@@ -71,6 +99,21 @@ def mock_mode() -> bool:
     if mode == "colmap":
         return False
     return not colmap_available()
+
+
+def estimate_remaining(percent: float, started_at: datetime | None) -> int | None:
+    """Seconds left, extrapolated from how long the finished part took.
+
+    Deliberately silent until a bit of the work is done: an estimate computed from
+    3% of a noisy process is worse than no estimate.
+    """
+    if started_at is None or percent < 8:
+        return None
+    elapsed = (utcnow() - started_at).total_seconds()
+    if elapsed < 5:
+        return None
+    total = elapsed / (percent / 100.0)
+    return max(0, int(round(total - elapsed)))
 
 
 # ------------------------------------------------------------------ parsing
@@ -268,7 +311,6 @@ def _verdict(*, ratio: float, components: list[dict], points3d: int, score: int)
 
 # ------------------------------------------------------------------ solving
 
-
 def _prepare_images(photos: list[Photo], target_dir: Path) -> tuple[int, list[str]]:
     """Hard-link the readable photos into `target_dir`, transcoding the rest.
 
@@ -341,18 +383,79 @@ def _commands(work: Path) -> list[list[str]]:
     ]
 
 
-def _run_command(command: list[str], log: list[str]) -> int:
+def _run_stage(
+    command: list[str],
+    log: list[str],
+    *,
+    total_images: int,
+    on_progress,
+) -> int:
+    """Run one COLMAP stage, reporting progress while it works.
+
+    Output is pumped from a reader thread so the timeout can still fire: iterating
+    `proc.stdout` directly blocks until the process ends, which would make the
+    timeout useless.
+    """
+    tool = command[1]
+    _, start, end = STAGES.get(tool, ("", 0.0, 100.0))
+    pattern = _PROGRESS_PATTERNS.get(tool)
+    on_progress(start, STAGES.get(tool, ("", 0.0, 0.0))[0])
     log.append("$ " + " ".join(command))
-    proc = subprocess.run(
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    proc = subprocess.Popen(
         command,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=config.RECON_TIMEOUT_S,
+        bufsize=1,
+        creationflags=creationflags,
     )
-    tail = ((proc.stdout or "") + (proc.stderr or "")).strip().splitlines()[-12:]
-    log.extend(tail)
+
+    lines: list[str] = []
+    reader = threading.Thread(target=lambda: [lines.append(line.rstrip()) for line in proc.stdout],
+                              daemon=True)
+    reader.start()
+
+    deadline = time.time() + config.RECON_TIMEOUT_S
+    seen = 0
+    try:
+        while proc.poll() is None:
+            if time.time() > deadline:
+                proc.kill()
+                proc.wait()
+                raise subprocess.TimeoutExpired(command, config.RECON_TIMEOUT_S)
+            if len(lines) > seen:
+                for line in lines[seen:]:
+                    if pattern is not None:
+                        match = pattern.search(line)
+                        if match:
+                            done = int(match.group(1))
+                            total = int(match.group(2)) if match.lastindex and match.lastindex > 1 else total_images
+                            if total > 0:
+                                fraction = min(done / total, 1.0)
+                                on_progress(start + (end - start) * fraction, STAGES.get(tool, ("", 0.0, 0.0))[0])
+                seen = len(lines)
+            time.sleep(0.35)
+    finally:
+        reader.join(timeout=2.0)
+
+    for line in lines[seen:]:
+        if pattern is not None:
+            match = pattern.search(line)
+            if match:
+                done = int(match.group(1))
+                total = int(match.group(2)) if match.lastindex and match.lastindex > 1 else total_images
+                if total > 0:
+                    on_progress(start + (end - start) * min(done / total, 1.0),
+                                STAGES.get(tool, ("", 0.0, 0.0))[0])
+
+    log.extend(lines[-14:])
+    on_progress(end, STAGES.get(tool, ("", 0.0, 0.0))[0])
     return proc.returncode
 
 
@@ -422,18 +525,30 @@ def _mock_report(image_names: list[str], *, note: str) -> dict:
     return report
 
 
-def solve_now(db: OrmSession, checkpoint: Checkpoint) -> dict:
-    """Run one trial solve synchronously and return the report (never raises)."""
+def solve_now(db: OrmSession, checkpoint: Checkpoint, *, on_progress=None) -> dict:
+    """Run one trial solve synchronously and return the report (never raises).
+
+    `on_progress(percent, stage)` is called as the stages advance; the queue turns
+    it into the progress bar the console polls.
+    """
     photos = list(db.scalars(
         select(Photo)
         .where(Photo.checkpoint_id == checkpoint.id, Photo.status.notin_(_SKIPPED_STATUSES))
         .order_by(Photo.id)
     ))
     image_names = [photo.original_filename for photo in photos]
-    work = recon_dir(checkpoint.id)
+    task = db.get(Task, checkpoint.task_id)
+    work = recon_dir(task, checkpoint) if task is not None else (
+        config.DATA_DIR / "recon" / f"checkpoint-{checkpoint.id}"
+    )
     started = time.time()
 
+    def report_progress(percent: float, stage: str) -> None:
+        if on_progress is not None:
+            on_progress(percent, stage)
+
     if len(photos) < config.RECON_MIN_PHOTOS:
+        report_progress(100.0, "skip")
         report = {
             "generated_at": utcnow().isoformat() + "Z",
             "mock": False,
@@ -450,6 +565,7 @@ def solve_now(db: OrmSession, checkpoint: Checkpoint) -> dict:
             "elapsed_s": round(time.time() - started, 2),
             "log_tail": [f"照片不足（{len(photos)} < {config.RECON_MIN_PHOTOS}），没有调用 COLMAP"],
             "note": f"只有 {len(photos)} 张可解算的照片，少于 {config.RECON_MIN_PHOTOS} 张不做试解算",
+            "work_dir": str(work),
         }
         report["score"] = 1
         report["checks"] = []
@@ -459,18 +575,22 @@ def solve_now(db: OrmSession, checkpoint: Checkpoint) -> dict:
         return report
 
     if mock_mode():
+        report_progress(100.0, "mock")
         report = _mock_report(image_names, note="THREEDGS_RECON_MODE=mock 或未安装 COLMAP：这是模拟结果，不是真实解算")
+        report["work_dir"] = str(work)
         report["suggestions"] = build_suggestions(report, shot_count=checkpoint.shot_count)
         return report
 
+    # Start from a clean directory, but never wipe the *other* checkpoints' results.
     shutil.rmtree(work, ignore_errors=True)
     log: list[str] = []
     try:
+        report_progress(1.0, "prepare")
         prepared, skipped = _prepare_images(photos, work / "images")
         if prepared < config.RECON_MIN_PHOTOS:
             raise RuntimeError(f"只有 {prepared} 张照片能交给 COLMAP（跳过了 {len(skipped)} 张）")
         for command in _commands(work):
-            code = _run_command(command, log)
+            code = _run_stage(command, log, total_images=prepared, on_progress=report_progress)
             # feature_extractor and matcher return non-zero on partial failures
             # that still leave a usable database; only the mapper is decisive.
             if code != 0 and command[1] == "mapper":
@@ -502,6 +622,7 @@ def solve_now(db: OrmSession, checkpoint: Checkpoint) -> dict:
             "skipped_images": skipped[:20],
             "elapsed_s": round(time.time() - started, 2),
             "log_tail": log[-20:],
+            "work_dir": str(work),
         }
         score, checks = score_report(ratio=report["registered_ratio"], components=report["components"],
                                      mean_error=report["mean_error_px"])
@@ -512,17 +633,15 @@ def solve_now(db: OrmSession, checkpoint: Checkpoint) -> dict:
         report["can_reconstruct"] = can_reconstruct
         report["verdict"] = verdict
         report["suggestions"] = build_suggestions(report, shot_count=checkpoint.shot_count)
+        report_progress(100.0, "done")
         return report
     except subprocess.TimeoutExpired:
-        return _failure_report(image_names, started, log + [f"超过 {config.RECON_TIMEOUT_S} 秒仍未完成，已中止"])
+        return _failure_report(image_names, started, log + [f"超过 {config.RECON_TIMEOUT_S} 秒仍未完成，已中止"], work)
     except Exception as exc:  # noqa: BLE001 - the report has to come back, not blow up
-        return _failure_report(image_names, started, log + [str(exc)])
-    finally:
-        # The model is evidence, not a product: the real run builds its own.
-        shutil.rmtree(work, ignore_errors=True)
+        return _failure_report(image_names, started, log + [str(exc)], work)
 
 
-def _failure_report(image_names: list[str], started: float, log: list[str]) -> dict:
+def _failure_report(image_names: list[str], started: float, log: list[str], work: Path) -> dict:
     report = {
         "generated_at": utcnow().isoformat() + "Z",
         "mock": False,
@@ -539,6 +658,8 @@ def _failure_report(image_names: list[str], started: float, log: list[str]) -> d
         "elapsed_s": round(time.time() - started, 2),
         "log_tail": log[-20:],
         "note": "试解算未能完成",
+        # The directory is kept on purpose: "why did it fail" gets asked later.
+        "work_dir": str(work),
     }
     report["score"] = 1
     report["checks"] = []
@@ -602,6 +723,13 @@ class SolveQueue:
             time.sleep(0.05)
         return self.pending == 0
 
+    def running_ids(self) -> list[int]:
+        """Which checkpoints are being solved right now (训练前的资源提示用)."""
+        with SessionLocal() as db:
+            return list(db.scalars(select(Checkpoint.id).where(
+                Checkpoint.solve_status.in_((SOLVE_RUNNING, SOLVE_QUEUED))
+            )))
+
     def requeue_stale(self) -> int:
         """Rows left in `running` by a restart go back to `failed` with a reason."""
         with SessionLocal() as db:
@@ -609,6 +737,9 @@ class SolveQueue:
             for row in rows:
                 row.solve_status = SOLVE_FAILED
                 row.solve_error = "服务重启，这次试解算被中断，请重新发起"
+                row.solve_progress = 0
+                row.solve_stage = None
+                row.solve_eta_s = None
                 row.solve_finished_at = utcnow()
             if rows:
                 db.commit()
@@ -635,9 +766,29 @@ class SolveQueue:
                 return
             checkpoint.solve_status = SOLVE_RUNNING
             checkpoint.solve_error = None
+            checkpoint.solve_progress = 1
+            checkpoint.solve_stage = "prepare"
+            checkpoint.solve_eta_s = None
             checkpoint.solve_started_at = utcnow()
             db.commit()
-            report = solve_now(db, checkpoint)
+            started_at = checkpoint.solve_started_at
+
+            # Progress arrives from the COLMAP reader thread; SQLite is not built
+            # for hundreds of tiny writes, so only the latest value every couple of
+            # seconds reaches the table (the console polls at that pace anyway).
+            state = {"percent": 1.0, "stage": "prepare", "written": 0.0}
+
+            def on_progress(percent: float, stage: str) -> None:
+                state["percent"] = max(state["percent"], min(100.0, percent))
+                state["stage"] = stage or state["stage"]
+                now = time.time()
+                if now - state["written"] < 2.0:
+                    return
+                state["written"] = now
+                self._write_progress(checkpoint_id, state["percent"], state["stage"], started_at)
+
+            report = solve_now(db, checkpoint, on_progress=on_progress)
+
         with SessionLocal() as db:
             checkpoint = db.get(Checkpoint, checkpoint_id)
             if checkpoint is None:
@@ -646,7 +797,24 @@ class SolveQueue:
             checkpoint.solve_status = SOLVE_DONE if report.get("verdict") else SOLVE_FAILED
             checkpoint.solve_error = None if report.get("verdict") else report.get("note")
             checkpoint.solve_finished_at = utcnow()
+            checkpoint.solve_progress = 100
+            checkpoint.solve_stage = "done" if report.get("verdict") else "failed"
+            checkpoint.solve_eta_s = None
             db.commit()
+
+    def _write_progress(self, checkpoint_id: int, percent: float, stage: str,
+                        started_at: datetime | None) -> None:
+        try:
+            with SessionLocal() as db:
+                row = db.get(Checkpoint, checkpoint_id)
+                if row is None or row.solve_status != SOLVE_RUNNING:
+                    return
+                row.solve_progress = int(round(max(0.0, min(100.0, percent))))
+                row.solve_stage = stage
+                row.solve_eta_s = estimate_remaining(percent, started_at or row.solve_started_at)
+                db.commit()
+        except Exception:  # noqa: BLE001 - progress must never break the solve
+            return
 
 
 queue = SolveQueue()

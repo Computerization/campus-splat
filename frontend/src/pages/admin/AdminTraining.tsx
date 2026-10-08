@@ -110,6 +110,14 @@ export default function AdminTraining() {
 
   async function start() {
     if (!selectedTask) return
+    // 有人正在试解算：会抢同一张卡的算力。只提醒、不拦 —— 同时跑也能出结果
+    const solving = preflight?.active_solves ?? []
+    if (solving.length) {
+      const names = solving
+        .map((item) => `${item.task_name} / ${item.name}`)
+        .join(t('common.listSeparator'))
+      if (!window.confirm(t('admin.training.solveWarning', { count: solving.length, names }))) return
+    }
     setBusy(true)
     setError(null)
     setNotice(null)

@@ -31,7 +31,9 @@ export default function AdminLayout() {
         </div>
 
         <nav>
-          <div className="sidebar-task-heading">{t('admin.nav.tasks')}</div>
+          <div className="sidebar-task-heading">
+            {session?.admin_id === 1 ? t('admin.nav.allTasks') : t('admin.nav.tasks')}
+          </div>
           {tasks?.map(item => <NavLink key={item.task.id} to={`/admin/tasks/${item.task.id}`} className={({isActive}) => isActive ? 'active sidebar-task' : 'sidebar-task'}><span>📌</span><span>{item.task.name}<small>{item.task.access_code}</small></span></NavLink>)}
           {!tasks?.length && <div className="sidebar-task-heading">{t('common.none')}</div>}
           {items.filter(item => item.to !== '/admin/training' || session?.admin_id === 1).map((item) => (

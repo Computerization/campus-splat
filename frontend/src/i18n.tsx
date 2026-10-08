@@ -112,22 +112,6 @@ const zh = {
   'join.adminNoteLink': '回到管理端',
   'join.adminNoteEnd': '。',
 
-  // ---- volunteer: board
-  'board.title': '拍摄看板',
-  'board.hello': '{name}，你好',
-  'board.progress': '总进度',
-  'board.summary': '共 {total} 个点位，完成 {done} 个',
-  'board.mine': '我传了 {total} 张，其中 {ok} 张可用',
-  'board.mineLink': '我的照片',
-  'board.goto': '去拍',
-  'board.redo': '补拍',
-  'board.done': '已拍完',
-  'board.allDone': '所有点位都拍完了，太强了！',
-  'board.empty': '这个任务还没有点位，等管理员安排～',
-  'board.directive': '按顺序一个个来，每个点位拍够张数就自动打勾。',
-  'board.usableTotal': '全部点位共有 {count} 张可用照片',
-  'board.rejectedInline': '{count} 张不合格',
-
   // ---- volunteer: checkpoint
   'cp.where': '去哪儿拍',
   'cp.how': '怎么拍',
@@ -229,8 +213,7 @@ const zh = {
   'admin.nav.system': '系统',
 
   // ---- admin: overview
-  'admin.overview.title': '全局总览',
-  'admin.overview.autoRefresh': '每 10 秒自动刷新',
+  'admin.overview.title': '任务总览',
   'admin.overview.lastRefresh': '上次刷新 {time}',
   'admin.overview.tasks': '任务',
   'admin.overview.photos': '照片总数',
@@ -762,6 +745,25 @@ const zh = {
   'admin.review.photoScore': '{score} 分',
   'admin.review.download': '下载原图',
   'cp.draftRestored': '已恢复上次选好但没上传的 {count} 张照片',
+
+  // ---- 试解算的进度与预计剩余时间
+  'admin.solve.stage.prepare': '准备输入照片',
+  'admin.solve.stage.features': '特征提取',
+  'admin.solve.stage.match': '特征匹配',
+  'admin.solve.stage.map': '解算位姿',
+  'admin.solve.stage.mock': '模拟结果',
+  'admin.solve.stage.skip': '照片不足',
+  'admin.solve.stage.done': '已完成',
+  'admin.solve.progress': '{stage} · {percent}%',
+  'admin.solve.eta': '预计还需 {time}',
+  'admin.solve.etaPending': '正在估算剩余时间…',
+  'admin.solve.etaSeconds': '{seconds} 秒',
+  'admin.solve.etaMinutes': '{minutes} 分钟',
+  'admin.solve.etaHours': '{hours} 小时 {minutes} 分',
+
+  // ---- 训练前的算力提示
+  'admin.training.solveWarning': '⚠️ 有 {count} 个点位正在试解算：{names}。训练和试解算会抢同一张显卡的算力，两边都会变慢（同时进行是可以的，只是都慢一点）。仍要现在开始训练吗？',
+  'admin.nav.allTasks': '全部任务',
 }
 
 export type MessageKey = keyof typeof zh
@@ -857,22 +859,6 @@ const en: Record<MessageKey, string> = {
   'join.adminNote': 'You are signed in as an admin. Joining with an access code switches this browser to the volunteer role (the admin console will ask you to sign in again). You can also go back to the',
   'join.adminNoteLink': 'admin console',
   'join.adminNoteEnd': '.',
-
-  'board.title': 'Capture board',
-  'board.hello': 'Hi {name}',
-  'board.progress': 'Overall progress',
-  'board.summary': '{total} checkpoints, {done} done',
-  'board.mine': 'You uploaded {total} photos, {ok} usable',
-  'board.mineLink': 'My photos',
-  'board.goto': 'Shoot',
-  'board.redo': 'Add more',
-  'board.done': 'Done',
-  'board.allDone': 'All checkpoints are done. Amazing!',
-  'board.empty': 'No checkpoints yet — waiting for the admin.',
-  'board.directive':
-    'Go one by one; each checkpoint checks itself off once you have enough shots.',
-  'board.usableTotal': '{count} usable photos across all checkpoints',
-  'board.rejectedInline': '{count} rejected',
 
   'cp.where': 'Where to shoot',
   'cp.how': 'How to shoot',
@@ -971,8 +957,7 @@ const en: Record<MessageKey, string> = {
   'admin.nav.training': 'Training',
   'admin.nav.system': 'System',
 
-  'admin.overview.title': 'Overview',
-  'admin.overview.autoRefresh': 'Auto-refreshes every 10 s',
+  'admin.overview.title': 'Tasks at a glance',
   'admin.overview.lastRefresh': 'Last refresh {time}',
   'admin.overview.tasks': 'Tasks',
   'admin.overview.photos': 'Photos',
@@ -1504,6 +1489,25 @@ const en: Record<MessageKey, string> = {
   'admin.review.photoScore': '{score} pts',
   'admin.review.download': 'Download original',
   'cp.draftRestored': 'Restored {count} photo(s) you had picked but not uploaded',
+
+  // ---- trial-solve progress and time estimate
+  'admin.solve.stage.prepare': 'Preparing photos',
+  'admin.solve.stage.features': 'Extracting features',
+  'admin.solve.stage.match': 'Matching features',
+  'admin.solve.stage.map': 'Solving poses',
+  'admin.solve.stage.mock': 'Mock result',
+  'admin.solve.stage.skip': 'Too few photos',
+  'admin.solve.stage.done': 'Done',
+  'admin.solve.progress': '{stage} · {percent}%',
+  'admin.solve.eta': 'about {time} left',
+  'admin.solve.etaPending': 'estimating the remaining time…',
+  'admin.solve.etaSeconds': '{seconds}s',
+  'admin.solve.etaMinutes': '{minutes} min',
+  'admin.solve.etaHours': '{hours} h {minutes} min',
+
+  // ---- compute warning before a training run
+  'admin.training.solveWarning': '⚠️ {count} checkpoint(s) are running a trial solve right now: {names}. Training and a trial solve share one GPU, so both get slower (running them together is fine, it is just slower). Start training now?',
+  'admin.nav.allTasks': 'All tasks',
 }
 
 export type Lang = 'zh' | 'en'

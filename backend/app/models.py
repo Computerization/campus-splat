@@ -209,6 +209,11 @@ class Checkpoint(Base):
     solve_status: Mapped[str] = mapped_column(String(16), default="none", index=True)
     solve_report: Mapped[dict | None] = mapped_column(JSON)
     solve_error: Mapped[str | None] = mapped_column(Text)
+    # Live progress while it runs: 0-100, which stage, and seconds still expected.
+    solve_progress: Mapped[int] = mapped_column(Integer, default=0)
+    # prepare | features | match | map | done | failed | mock | skip
+    solve_stage: Mapped[str | None] = mapped_column(String(16))
+    solve_eta_s: Mapped[int | None] = mapped_column(Integer)
     solve_started_at: Mapped[datetime | None] = mapped_column(DateTime)
     solve_finished_at: Mapped[datetime | None] = mapped_column(DateTime)
 

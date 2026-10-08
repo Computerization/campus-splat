@@ -51,6 +51,7 @@ from ..schemas import (
     QualityOut,
     ResetIn,
     RevealIn,
+    SolveActivityOut,
     TaskCreateIn,
     TaskOut,
     TaskPatchIn,
@@ -104,7 +105,12 @@ def overview(
     session: AuthSession = Depends(require_admin),
     db: OrmSession = Depends(get_db),
 ) -> dict:
-    result = stats.build_overview(db, include_archived=include_archived, owner_admin_id=session.admin_id)
+    # 001 是超管：总览看全部任务的进度；002/003 只看自己发布的
+    result = stats.build_overview(
+        db,
+        include_archived=include_archived,
+        owner_admin_id=None if session.admin_id == config.SUPER_ADMIN_ID else session.admin_id,
+    )
     if session.admin_id != 1:
         result.training = []
     return result.model_dump(mode="json")
@@ -149,7 +155,10 @@ def list_tasks(
     session: AuthSession = Depends(require_admin),
     db: OrmSession = Depends(get_db),
 ) -> list[TaskProgressOut]:
-    query = select(Task).where(Task.owner_admin_id == session.admin_id, Task.status != 'deleted').order_by(Task.created_at.desc(), Task.id.desc())
+    # 001 是超管：任务列表也是全部的（训练要选整栋楼）；002/003 只看自己的
+    query = select(Task).where(Task.status != 'deleted').order_by(Task.created_at.desc(), Task.id.desc())
+    if session.admin_id != config.SUPER_ADMIN_ID:
+        query = query.where(Task.owner_admin_id == session.admin_id)
     if not include_archived:
         query = query.where(Task.status != "archived")
     tasks = db.execute(query).scalars().all()
@@ -738,7 +747,25 @@ def training_preflight(
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
-    return TrainingPreflightOut.model_validate(data)
+    model = TrainingPreflightOut.model_validate(data)
+    # 试解算和训练抢同一张卡的算力：只提醒，不拦（同时跑也能出结果）
+    model.active_solves = [
+        SolveActivityOut(
+            checkpoint_id=checkpoint.id,
+            name=checkpoint.name,
+            task_name=task.name,
+            status=checkpoint.solve_status,
+            progress=checkpoint.solve_progress or 0,
+            eta_s=checkpoint.solve_eta_s,
+        )
+        for checkpoint, task in db.execute(
+            select(Checkpoint, Task)
+            .join(Task, Task.id == Checkpoint.task_id)
+            .where(Checkpoint.solve_status.in_(("queued", "running")))
+            .order_by(Checkpoint.id)
+        ).all()
+    ]
+    return model
 
 
 @router.post("/training", response_model=TrainingRunDetailOut, status_code=201)

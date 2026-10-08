@@ -78,10 +78,13 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "reviewed_at": "DATETIME",
         "submitted_at": "DATETIME",
         "attempt": "INTEGER DEFAULT 0",
-        # Trial reconstruction (试解算，见 services/recon.py)
+        # 试解算 (trial reconstruction) — services/recon.py
         "solve_status": "VARCHAR(16) DEFAULT 'none'",
         "solve_report": "JSON",
         "solve_error": "TEXT",
+        "solve_progress": "INTEGER DEFAULT 0",
+        "solve_stage": "VARCHAR(16)",
+        "solve_eta_s": "INTEGER",
         "solve_started_at": "DATETIME",
         "solve_finished_at": "DATETIME",
     },

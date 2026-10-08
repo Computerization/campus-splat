@@ -37,6 +37,8 @@ else:
 
 THUMB_DIR = DATA_DIR / "thumbnails"
 TRAINING_DIR = DATA_DIR / "training"
+# 试解算的工作目录 data/recon/<任务>/<点位>/ — kept after each run on purpose
+RECON_DIR = DATA_DIR / "recon"
 LOG_DIR = DATA_DIR / "logs"
 DB_PATH = DATA_DIR / "app.db"
 
@@ -216,5 +218,5 @@ TRAINING_BLOCK_STAGES = (
 
 
 def ensure_dirs() -> None:
-    for path in (DATA_DIR, UPLOAD_DIR, THUMB_DIR, TRAINING_DIR, LOG_DIR):
+    for path in (DATA_DIR, UPLOAD_DIR, THUMB_DIR, TRAINING_DIR, RECON_DIR, LOG_DIR):
         path.mkdir(parents=True, exist_ok=True)
