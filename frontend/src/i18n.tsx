@@ -761,6 +761,7 @@ const zh = {
   'admin.solve.scoreShort': '{score} 分',
   'admin.review.photoScore': '{score} 分',
   'admin.review.download': '下载原图',
+  'cp.draftRestored': '已恢复上次选好但没上传的 {count} 张照片',
 }
 
 export type MessageKey = keyof typeof zh
@@ -1502,6 +1503,7 @@ const en: Record<MessageKey, string> = {
   'admin.solve.scoreShort': '{score} pts',
   'admin.review.photoScore': '{score} pts',
   'admin.review.download': 'Download original',
+  'cp.draftRestored': 'Restored {count} photo(s) you had picked but not uploaded',
 }
 
 export type Lang = 'zh' | 'en'

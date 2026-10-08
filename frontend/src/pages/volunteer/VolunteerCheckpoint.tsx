@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../../api'
 import { Badge, ErrorBox, ProgressBar, Spinner, formatDateTime, useAsync } from '../../components/common'
+import { clearDraft, readDraft, writeDraft } from '../../drafts'
 import { ShootingTips } from '../../components/ShotGuide'
 import { issueLabel, useI18n } from '../../i18n'
 import type { CheckpointProgress, UploadBatch, UploadResult } from '../../types'
@@ -35,6 +36,21 @@ export default function VolunteerCheckpoint() {
   const [submitting, setSubmitting] = useState(false)
   const [notice, setNotice] = useState('')
 
+  // 上次选好但没上传的照片：手机上切去相机、误刷新页面都很常见，捡回来
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const draft = await readDraft(checkpointId)
+      if (cancelled || draft.length === 0) return
+      // Never clobber photos the volunteer just picked
+      setFiles((current) => (current.length ? current : draft))
+      setNotice(t('cp.draftRestored', { count: draft.length }))
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [checkpointId, t])
+
   // 交卷：把这一点位的照片交给管理员审核，然后可以马上接下一个点位。
   async function handIn() {
     if (!window.confirm(t('volunteer.board.submitConfirm'))) return
@@ -42,6 +58,7 @@ export default function VolunteerCheckpoint() {
     setNotice('')
     try {
       await api.submitCheckpoint(checkpointId)
+      await clearDraft(checkpointId)
       navigate('/v')
     } catch (err) {
       setUploadError(err)
@@ -122,6 +139,8 @@ export default function VolunteerCheckpoint() {
       ])
       setFiles([])
       if (inputRef.current) inputRef.current.value = ''
+      // The files are on the server now — nothing left to restore
+      await clearDraft(checkpointId)
       await silentRefresh()
     } catch (err) {
       setUploadError(err)
@@ -249,6 +268,8 @@ export default function VolunteerCheckpoint() {
               const picked = Array.from(event.target.files ?? []).slice(0, MAX_FILES)
               setFiles(picked)
               setUploadError(null)
+              // 存进 IndexedDB：刷新页面、或切去相机再回来，都能接着上传
+              void writeDraft(checkpointId, picked)
             }}
           />
           <p className="hint">{t('cp.maxFiles')}</p>
@@ -257,7 +278,7 @@ export default function VolunteerCheckpoint() {
               {t('cp.chosen', { count: files.length })}：
               <span className="muted">
                 {' '}
-                {files.map((file) => file.name).join('、').slice(0, 120)}
+                {files.map((file) => file.name).join(t('common.listSeparator')).slice(0, 120)}
               </span>
             </p>
           )}
