@@ -183,7 +183,7 @@ export default function AdminSystem() {
               {t('admin.system.cleanSessions')}
             </button>
           </div>
-          <p className="small muted">管理员只能管理自己的任务。请在任务页面删除任务；全局清空已关闭，账号 ID 和历史信息永久保留。</p>
+          <p className="small muted">{t('admin.system.deleteNote')}</p>
         </Card>
       </div>
 

@@ -21,7 +21,7 @@ export default function Landing() {
           <Link className="entry" to={session?.role === 'volunteer' ? '/v' : '/join'}>
             <span className="icon">📱</span>
             <strong>{t('landing.volunteer')}</strong>
-            <span className="desc">注册独立账号，接取拍摄任务，统一提交成果</span>
+            <span className="desc">{t('landing.volunteer.desc')}</span>
           </Link>
           <Link className="entry" to={isAdmin ? '/admin' : '/admin/login'}>
             <span className="icon">🖥️</span>

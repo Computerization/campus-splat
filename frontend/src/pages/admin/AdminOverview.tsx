@@ -34,9 +34,9 @@ export default function AdminOverview() {
     <>
       <div className="page-head">
         <div>
-          <h1>我的任务总览</h1>
+          <h1>{t('admin.overview.title')}</h1>
           <div className="sub">
-            每 2 秒自动刷新 ·{' '}
+            {t('admin.overview.refreshHint')} ·{' '}
             {t('admin.overview.lastRefresh', { time: new Date().toLocaleTimeString() })}
           </div>
         </div>
@@ -204,7 +204,8 @@ export default function AdminOverview() {
                         {t('common.peopleCount', { count: item.contributors.length })}
                       </span>
                       <div className="small muted">
-                        正在进行：{item.active_volunteers.join(t('common.listSeparator')) || '暂无志愿者'}
+                        {t('admin.tasks.inProgress')}：
+                        {item.active_volunteers.join(t('common.listSeparator')) || t('admin.overview.noVolunteers')}
                       </div>
                     </td>
                     <td className="small muted">{relativeTime(item.last_upload_at)}</td>

@@ -212,8 +212,12 @@ function SolvePanel({
                     <ul className="small">
                       {report.components.map((component) => (
                         <li key={component.model}>
-                          #{component.model} · {component.images} 张 · {component.points3d} 点 ·{' '}
-                          {component.mean_error_px} px
+                          {t('admin.solve.component', {
+                            model: component.model,
+                            images: component.images,
+                            points: component.points3d,
+                            error: component.mean_error_px,
+                          })}
                         </li>
                       ))}
                     </ul>
@@ -393,7 +397,7 @@ export default function AdminCheckpointReviews() {
                     {item.solve ? (
                       <Badge tone={VERDICT_TONE[item.solve.verdict ?? ''] ?? 'neutral'}>
                         {item.solve.status === 'done'
-                          ? `${item.solve.score ?? '-'} 分`
+                          ? t('admin.solve.scoreShort', { score: item.solve.score ?? '-' })
                           : t(`admin.solve.status.${item.solve.status}` as never)}
                       </Badge>
                     ) : (
@@ -462,11 +466,11 @@ export default function AdminCheckpointReviews() {
                   <span className="small">{photo.original_filename}</span>
                   <Badge tone={statusTone('submitted')}>{t(`status.${photo.status}` as never)}</Badge>
                   <span className="small muted">
-                    {photo.quality?.score ?? '-'} 分
+                    {t('admin.review.photoScore', { score: photo.quality?.score ?? '-' })}
                   </span>
                   <span className="small muted">{photo.quality?.advice}</span>
                   <a className="small" href={photo.file_url || '#'} target="_blank" rel="noreferrer">
-                    下载原图
+                    {t('admin.review.download')}
                   </a>
                 </div>
               ))}

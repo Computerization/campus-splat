@@ -128,13 +128,16 @@ export default function AdminTasks() {
                       {item.task.folder && (
                         <div className="small muted mono">uploads/{item.task.folder}</div>
                       )}
-                      <div className="small muted">正在进行：{item.active_volunteers.join('、') || '暂无志愿者'}</div>
+                      <div className="small muted">
+                        {t('admin.tasks.inProgress')}：
+                        {item.active_volunteers.join(t('common.listSeparator')) || t('admin.overview.noVolunteers')}
+                      </div>
                     </td>
                     <td>
                       <span className="tag-code">{item.task.access_code}</span>
                       <div style={{ marginTop: 4 }}>
                         <CopyButton
-                          text={`${window.location.origin}/v/tasks/${item.task.id}`}
+                          text={`${window.location.origin}/v`}
                           label={t('common.copyLink')}
                         />
                       </div>
@@ -256,10 +259,10 @@ export default function AdminTasks() {
             type="text"
             value={form.access_code}
             onChange={(event) => setForm({ ...form, access_code: event.target.value.toUpperCase() })}
-            placeholder="创建后自动生成随机 5 位任务码"
+            placeholder={t('admin.tasks.codePlaceholder')}
             disabled
           />
-          <span className="hint">任务码由系统生成并永久绑定，不可修改。</span>
+          <span className="hint">{t('admin.tasks.codeHint')}</span>
         </label>
       </Modal>
 

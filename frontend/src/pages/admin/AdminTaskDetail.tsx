@@ -665,7 +665,7 @@ export default function AdminTaskDetail() {
           <input type="text" value={taskName} onChange={(event) => setTaskName(event.target.value)} />
           <span className="hint">{t('admin.tasks.nameHint')}</span>
         </label>
-        <label className="field"><span>任务描述</span><textarea value={taskDescription} onChange={event => setTaskDescription(event.target.value)} /></label>
+        <label className="field"><span>{t('admin.detail.description')}</span><textarea value={taskDescription} onChange={event => setTaskDescription(event.target.value)} /></label>
       </Modal>
 
       {toast && <Toast text={toast} />}
