@@ -15,7 +15,7 @@ interface AuthValue {
   ready: boolean
   isAdmin: boolean
   isVolunteer: boolean
-  adminLogin: (password: string) => Promise<Session>
+  adminLogin: (password: string, adminId?: number) => Promise<Session>
   volunteerJoin: (accessCode: string, nickname: string) => Promise<Session>
   volunteerLogin: (username: string, password: string, register?: boolean) => Promise<Session>
   logout: () => Promise<void>
@@ -54,8 +54,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, handler)
   }, [])
 
-  const adminLogin = useCallback(async (password: string) => {
-    const result = await api.adminLogin(password)
+  const adminLogin = useCallback(async (password: string, adminId?: number) => {
+    const result = await api.adminLogin(password, adminId)
     setToken(result.token)
     setSession(result)
     return result

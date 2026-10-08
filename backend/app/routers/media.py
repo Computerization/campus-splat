@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session as OrmSession
 from .. import storage
 from ..database import get_db
 from ..models import AuthSession, Checkpoint, Photo, Task
-from ..security import current_session, require_owned_task
+from ..security import current_session
 
 router = APIRouter(prefix="/api/media", tags=["media"])
 
@@ -20,9 +20,10 @@ def _load_photo(db: OrmSession, photo_id: int, session: AuthSession) -> Photo:
     photo = db.get(Photo, photo_id)
     if photo is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "照片不存在")
-    if session.role == 'admin':
-        require_owned_task(db, photo.task_id, session)
-    elif session.volunteer_id != photo.volunteer_id:
+    # Every administrator may look at every photo: the checkpoint review page
+    # covers all tasks and 001 judges any of them. Volunteers see their own
+    # uploads only.
+    if session.role != 'admin' and session.volunteer_id != photo.volunteer_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "无权访问这条任务的照片")
     return photo
 
@@ -82,8 +83,7 @@ def get_checkpoint_reference(
     checkpoint = db.get(Checkpoint, checkpoint_id)
     if checkpoint is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "点位不存在")
-    if session.role == 'admin':
-        require_owned_task(db, checkpoint.task_id, session)
-    elif db.get(Task, checkpoint.task_id).status == 'deleted':
-        raise HTTPException(404, '任务已删除')
+    task = db.get(Task, checkpoint.task_id)
+    if task is None or task.status == 'deleted':
+        raise HTTPException(status.HTTP_404_NOT_FOUND, '任务已删除')
     return _respond(checkpoint.reference_image)

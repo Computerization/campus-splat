@@ -69,6 +69,21 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "room_height_m": "FLOAT",
         # ASCII folder under data/uploads/ (set when the row is created)
         "folder": "VARCHAR(80)",
+        # Per-checkpoint workflow: a volunteer holds one checkpoint at a time
+        "claimed_by": "INTEGER",
+        "claimed_at": "DATETIME",
+        "review_status": "VARCHAR(16) DEFAULT 'pending'",
+        "review_note": "TEXT",
+        "reviewed_by": "INTEGER",
+        "reviewed_at": "DATETIME",
+        "submitted_at": "DATETIME",
+        "attempt": "INTEGER DEFAULT 0",
+        # Trial reconstruction (试解算，见 services/recon.py)
+        "solve_status": "VARCHAR(16) DEFAULT 'none'",
+        "solve_report": "JSON",
+        "solve_error": "TEXT",
+        "solve_started_at": "DATETIME",
+        "solve_finished_at": "DATETIME",
     },
     # The graded pipeline (docs/training-pipeline.md) turned a "job" into a run
     # with blocks, artifacts and a reuse pointer.
@@ -88,11 +103,36 @@ def init_db() -> None:
     config.ensure_dirs()
     Base.metadata.create_all(bind=engine)
     _add_missing_columns()
+    _seed_admin_accounts()
     # Old password-only / task-code sessions have no account identity.
     from sqlalchemy import text
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM auth_sessions WHERE admin_id IS NULL AND volunteer_id IS NULL"))
         conn.execute(text("UPDATE tasks SET owner_admin_id=1 WHERE owner_admin_id IS NULL"))
+
+
+def _seed_admin_accounts() -> None:
+    """Give the fixed administrators their starting password.
+
+    `config.ADMIN_PASSWORDS` is only the seed: once a row exists, the hash in the
+    database is the truth, so an admin who changes their password keeps it across
+    restarts.
+    """
+    from sqlalchemy import select
+
+    from .models import AdminAccount
+    from .services.passwords import hash_password
+
+    with SessionLocal() as db:
+        existing = set(db.scalars(select(AdminAccount.id)))
+        added = [
+            AdminAccount(id=admin_id, password_hash=hash_password(password))
+            for admin_id, password in sorted(config.ADMIN_PASSWORDS.items())
+            if admin_id not in existing
+        ]
+        if added:
+            db.add_all(added)
+            db.commit()
 
 
 def _add_missing_columns() -> None:

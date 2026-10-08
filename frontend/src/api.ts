@@ -1,7 +1,11 @@
 import type {
-  Board,
   Checkpoint,
+  CheckpointBoard,
+  CheckpointCard,
   CheckpointDetail,
+  CheckpointReviewDetail,
+  CheckpointReviewItem,
+  CheckpointReviewList,
   Metrics,
   Overview,
   Photo,
@@ -117,8 +121,11 @@ function json(body: unknown): RequestInit {
 
 export const api = {
   // ---- auth
-  adminLogin: (password: string) =>
-    request<Session>('/api/auth/admin/login', { method: 'POST', ...json({ password }) }),
+  adminLogin: (password: string, adminId?: number) =>
+    request<Session>('/api/auth/admin/login', {
+      method: 'POST',
+      ...json(adminId ? { password, admin_id: adminId } : { password }),
+    }),
   volunteerJoin: (accessCode: string, nickname: string) =>
     request<Session>('/api/auth/volunteer/join', {
       method: 'POST',
@@ -127,9 +134,18 @@ export const api = {
   me: () => request<Session>('/api/auth/me'),
   logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
 
-  // ---- volunteer
-  board: () => request<Board>('/api/volunteer/board'),
+  // ---- volunteer（点位级：一次接一个点位）
+  board: () => request<CheckpointBoard>('/api/volunteer/board'),
   checkpointDetail: (id: number) => request<CheckpointDetail>(`/api/volunteer/checkpoints/${id}`),
+  claimCheckpoint: (id: number) =>
+    request<CheckpointCard>(`/api/volunteer/checkpoints/${id}/claim`, { method: 'POST' }),
+  releaseCheckpoint: (id: number) =>
+    request<{ ok: boolean }>(`/api/volunteer/checkpoints/${id}/release`, { method: 'POST' }),
+  submitCheckpoint: (id: number) =>
+    request<CheckpointCard>(`/api/volunteer/checkpoints/${id}/submit`, { method: 'POST' }),
+  changeMyPassword: (current_password: string, password: string) =>
+    request('/api/auth/volunteer/password', { method: 'PATCH', ...json({ current_password, password }) }),
+  closeMyAccount: () => request<{ ok: boolean }>('/api/auth/volunteer/account', { method: 'DELETE' }),
   myPhotos: (limit = 80) => request<Photo[]>(`/api/volunteer/my/photos?limit=${limit}`),
   // The verdicts of photos already uploaded — the quality check runs in the
   // background, so the page polls this until nothing is left "checking"
@@ -147,6 +163,24 @@ export const api = {
     request<Overview>(`/api/admin/overview?include_archived=${includeArchived}`),
   systemInfo: () => request<SystemInfo>('/api/admin/system'),
   metrics: () => request<Metrics>('/api/admin/metrics'),
+
+  // ---- admin: 点位照片最终审核 + 试解算
+  checkpointReviews: (status: string) =>
+    request<CheckpointReviewList>(`/api/admin/checkpoint-reviews?status=${status}`),
+  checkpointReview: (id: number) =>
+    request<CheckpointReviewDetail>(`/api/admin/checkpoint-reviews/${id}`),
+  reviewCheckpoint: (id: number, decision: 'approve' | 'return', note: string) =>
+    request<CheckpointReviewItem>(`/api/admin/checkpoint-reviews/${id}/review`, {
+      method: 'POST',
+      ...json({ decision, note }),
+    }),
+  solveCheckpoint: (id: number) =>
+    request<CheckpointReviewItem>(`/api/admin/checkpoint-reviews/${id}/solve`, { method: 'POST' }),
+  changeAdminPassword: (current_password: string, password: string) =>
+    request<{ admin_id: number }>('/api/auth/admin/password', {
+      method: 'PATCH',
+      ...json({ current_password, password }),
+    }),
 
   // ---- admin: tasks
   listTasks: (includeArchived = true) =>

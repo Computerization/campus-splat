@@ -65,7 +65,7 @@ from ..schemas import (
     TrainingRunOut,
 )
 from ..security import prune_expired_sessions, require_admin, admin_scope
-from ..services import naming, splat, stats, sysinfo, training
+from ..services import naming, shots, splat, stats, sysinfo, training
 from ..services.training import manager, queue_depth
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(admin_scope)])
@@ -305,7 +305,10 @@ def create_checkpoint(
         indoor=payload.indoor,
         instructions=payload.instructions,
         find_hint=payload.find_hint,
-        shot_count=payload.shot_count,
+        # A typed number wins; otherwise estimate it from the room size; else 4.
+        shot_count=payload.shot_count
+        or shots.suggest_shot_count(payload.length_m, payload.width_m, payload.room_height_m)
+        or 4,
         angles=[a.model_dump() for a in payload.angles] if payload.angles else None,
     )
     db.add(checkpoint)
@@ -393,7 +396,11 @@ def bulk_create_checkpoints(
                 indoor=item.indoor,
                 instructions=item.instructions,
                 find_hint=item.find_hint,
-                shot_count=item.shot_count,
+                # The import format carries no shot count (点位名|位置|长x宽x高):
+                # derive it from the size unless the caller sent one.
+                shot_count=item.shot_count
+                or shots.suggest_shot_count(item.length_m, item.width_m, item.room_height_m)
+                or 4,
                 angles=[a.model_dump() for a in item.angles] if item.angles else None,
             )
         )

@@ -441,6 +441,145 @@ export interface Board {
 
 export interface CheckpointDetail {
   checkpoint: CheckpointProgress
+  task: { id: number; name: string; kind: string }
+  review: {
+    status: CheckpointReviewStatus
+    note: string | null
+    reviewed_at: string | null
+    attempt: number
+  }
+  held_by_me: boolean
+  held_by_other: boolean
   my_photos: Photo[]
   reference_url: string | null
+}
+
+/** 点位大厅：志愿者一次接一个点位。 */
+export interface CheckpointCard {
+  checkpoint: CheckpointProgress
+  task_id: number
+  task_name: string
+  task_kind: string
+  review_status: CheckpointReviewStatus
+  review_note: string | null
+  attempt: number
+  mine: boolean
+  my_photo_count: number
+  my_usable_count: number
+  claimed_by_someone_else: boolean
+}
+
+export interface CheckpointBoard {
+  busy: boolean
+  held: CheckpointCard[]
+  reviewing: CheckpointCard[]
+  approved: CheckpointCard[]
+  available: CheckpointCard[]
+}
+
+// ---------------------------------------------------- 点位照片最终审核 + 试解算
+
+/** One checkpoint's review verdict. (Different from `ReviewStatus` above, which
+ *  is an admin's manual override of a single photo's quality verdict.) */
+export type CheckpointReviewStatus = 'pending' | 'submitted' | 'approved' | 'returned'
+export type SolveStatus = 'none' | 'queued' | 'running' | 'done' | 'failed'
+export type SolveVerdict = 'ok' | 'risky' | 'failed'
+export type SolveLevel = 'good' | 'warn' | 'bad'
+
+export interface SolveCheck {
+  key: 'registered' | 'connectivity' | 'reprojection'
+  level: SolveLevel
+  points: number
+  max_points: number
+}
+
+export interface SolveSuggestion {
+  level: SolveLevel
+  text: string
+}
+
+export interface SolveComponent {
+  model: string
+  images: number
+  points3d: number
+  mean_error_px: number
+}
+
+/** The short version shown in the review list. */
+export interface SolveSummary {
+  status: SolveStatus
+  error: string | null
+  mock: boolean
+  score: number | null
+  verdict: SolveVerdict | null
+  can_reconstruct: boolean | null
+  registered_ratio: number | null
+  components: number
+  images: number | null
+  registered: number | null
+  mean_error_px: number | null
+  elapsed_s: number | null
+  finished_at: string | null
+}
+
+/** The whole report produced by services/recon.py. */
+export interface SolveReport {
+  generated_at: string
+  mock: boolean
+  note?: string
+  images: number
+  registered: number
+  registered_ratio: number
+  components: SolveComponent[]
+  points3d: number
+  mean_error_px: number
+  median_error_px: number
+  worst_images: { name: string; error: number }[]
+  unregistered_images: string[]
+  skipped_images: string[]
+  elapsed_s: number
+  log_tail: string[]
+  score: number
+  checks: SolveCheck[]
+  can_reconstruct: boolean
+  verdict: SolveVerdict
+  suggestions: SolveSuggestion[]
+}
+
+export interface CheckpointReviewItem {
+  checkpoint_id: number
+  name: string
+  room: string | null
+  order_index: number
+  task_id: number
+  task_name: string
+  task_kind: string
+  owner_admin_id: number
+  volunteer: string | null
+  required: number
+  usable_photos: number
+  total_photos: number
+  review_status: CheckpointReviewStatus
+  review_note: string | null
+  reviewed_by: number | null
+  submitted_at: string | null
+  reviewed_at: string | null
+  attempt: number
+  can_operate: boolean
+  solve: SolveSummary | null
+}
+
+export interface CheckpointReviewDetail extends CheckpointReviewItem {
+  photos: Photo[]
+  report: SolveReport | null
+  shots_note: string | null
+  find_hint: string | null
+  reference_url: string | null
+  pending_siblings: number[]
+}
+
+export interface CheckpointReviewList {
+  items: CheckpointReviewItem[]
+  counts: Record<string, number>
+  status: string
 }

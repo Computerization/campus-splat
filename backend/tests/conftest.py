@@ -27,6 +27,9 @@ os.environ["THREEDGS_MOCK_STEP_SECONDS"] = "0.01"
 # inline path so a finished upload is a finished check; the asynchronous path
 # has its own tests in test_quality_jobs.py.
 os.environ["THREEDGS_QUALITY_INLINE"] = "1"
+# 试解算 (services/recon.py) needs COLMAP and minutes of CPU. Tests use the mock
+# report, so the review page, the score and the suggestions are still covered.
+os.environ["THREEDGS_RECON_MODE"] = "mock"
 
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
@@ -88,7 +91,17 @@ def isolated_login_limiter():
 
 @pytest.fixture(scope="session")
 def admin_headers(client: TestClient) -> dict:
-    response = client.post("/api/auth/admin/login", json={"password": "admin001"})
+    response = client.post("/api/auth/admin/login", json={"password": "admin001", "admin_id": 1})
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['token']}"}
+
+
+def admin_login(client, admin_id: int) -> dict:
+    """Sign in as one of the three fixed administrators (001/002/003)."""
+    response = client.post(
+        "/api/auth/admin/login",
+        json={"password": f"admin{admin_id:03d}", "admin_id": admin_id},
+    )
     assert response.status_code == 200, response.text
     return {"Authorization": f"Bearer {response.json()['token']}"}
 

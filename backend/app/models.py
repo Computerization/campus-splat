@@ -51,7 +51,31 @@ class VolunteerAccount(Base):
     archived_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
+class AdminAccount(Base):
+    """The three fixed administrators.
+
+    Their passwords used to be code constants (`config.ADMIN_PASSWORDS`). They now
+    live here — hashed — so each admin can change their own from the console, and
+    `config.ADMIN_PASSWORDS` only seeds the very first start.
+    """
+
+    __tablename__ = "admin_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 class TaskAssignment(Base):
+    """A volunteer's claim on a whole task (the model that predates per-checkpoint
+    work).
+
+    Superseded by `Checkpoint.claimed_by` / `review_status`: a volunteer now takes
+    one checkpoint at a time, uploads it and moves on, instead of collecting every
+    checkpoint of a task and handing the whole thing in at once. Kept so existing
+    rows keep working.
+    """
+
     __tablename__ = "task_assignments"
     __table_args__ = (UniqueConstraint("task_id", "volunteer_id"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -158,11 +182,35 @@ class Checkpoint(Base):
     reference_image: Mapped[str | None] = mapped_column(String(255))
     find_hint: Mapped[str | None] = mapped_column(Text)
 
-    # pending | in_progress | done | blocked
+    # How far the shooting is: pending | in_progress | done | blocked
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
     admin_note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    # ---- Per-checkpoint workflow -------------------------------------------
+    # A volunteer takes one checkpoint at a time, shoots it, uploads it, and only
+    # then picks up the next one. `claimed_by` is the volunteer holding it.
+    claimed_by: Mapped[int | None] = mapped_column(Integer, index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Review of *this* checkpoint's photos, separate from `status` above (which
+    # only says whether enough photos exist).
+    # pending (not submitted yet) | submitted | approved | returned
+    review_status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    review_note: Mapped[str | None] = mapped_column(Text)
+    reviewed_by: Mapped[int | None] = mapped_column(Integer)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # How many times the volunteer has handed this checkpoint in (0 = never)
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+
+    # ---- Trial reconstruction (试解算) --------------------------------------
+    # none | queued | running | done | failed — see services/recon.py
+    solve_status: Mapped[str] = mapped_column(String(16), default="none", index=True)
+    solve_report: Mapped[dict | None] = mapped_column(JSON)
+    solve_error: Mapped[str | None] = mapped_column(Text)
+    solve_started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    solve_finished_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     task: Mapped["Task"] = relationship(back_populates="checkpoints")
     photos: Mapped[list["Photo"]] = relationship(

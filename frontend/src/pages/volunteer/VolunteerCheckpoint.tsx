@@ -32,6 +32,23 @@ export default function VolunteerCheckpoint() {
   const [results, setResults] = useState<Record<number, UploadResult>>({})
   const [trackedIds, setTrackedIds] = useState<number[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [notice, setNotice] = useState('')
+
+  // 交卷：把这一点位的照片交给管理员审核，然后可以马上接下一个点位。
+  async function handIn() {
+    if (!window.confirm(t('volunteer.board.submitConfirm'))) return
+    setSubmitting(true)
+    setNotice('')
+    try {
+      await api.submitCheckpoint(checkpointId)
+      navigate('/v')
+    } catch (err) {
+      setUploadError(err)
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   const pendingIds = trackedIds.filter((photoId) => results[photoId]?.status === 'checking')
   const pendingKey = pendingIds.join(',')
@@ -136,6 +153,43 @@ export default function VolunteerCheckpoint() {
           {t(`status.${cp.status}` as never)}
         </Badge>
       </header>
+
+      {/* 审核状态 + 交卷：一次一个点位，交完就能接下一个 */}
+      <div className="vol-body" style={{ paddingBottom: 0 }}>
+        <div className="card">
+          {data.review.status === 'returned' ? (
+            <p className="workflow-note">
+              {t('volunteer.board.returned')}
+              {data.review.note ? `：${data.review.note}` : ''}
+            </p>
+          ) : null}
+          {data.review.status === 'submitted' ? (
+            <p className="badge badge-warn">{t('volunteer.board.submitted')}</p>
+          ) : null}
+          {data.review.status === 'approved' ? (
+            <p className="badge badge-ok">{t('admin.review.tab.approved')}</p>
+          ) : null}
+          {data.review.attempt > 1 ? (
+            <p className="small muted">{t('volunteer.board.attempt', { count: data.review.attempt })}</p>
+          ) : null}
+          {!data.held_by_me ? (
+            <p className="workflow-note">
+              {data.held_by_other ? t('volunteer.board.byOther') : t('volunteer.board.claim')}
+            </p>
+          ) : null}
+          {data.held_by_me && data.review.status !== 'submitted' ? (
+            <button
+              type="button"
+              className="btn btn-primary block"
+              disabled={submitting || cp.uploaded_usable === 0}
+              onClick={() => void handIn()}
+            >
+              {t('volunteer.board.submit')}
+            </button>
+          ) : null}
+          {notice ? <p role="status">{notice}</p> : null}
+        </div>
+      </div>
 
       <div className="vol-body">
         <div className="card">

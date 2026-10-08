@@ -18,8 +18,9 @@ from fastapi.staticfiles import StaticFiles
 from . import config
 from .database import init_db
 from .quality import HEIF_SUPPORTED
-from .routers import admin, auth, media, volunteer, workflow
+from .routers import admin, auth, media, reviews, volunteer, workflow
 from .services.quality_jobs import queue as quality_queue
+from .services.recon import queue as recon_queue
 from .services.training import manager as training_manager
 
 logger = logging.getLogger("threedgs")
@@ -37,9 +38,14 @@ async def lifespan(app: FastAPI):
     else:
         quality_queue.start()  # background checks; uploads never wait for them
     training_manager.start()
+    # A restart loses track of the trial solver, so rows that still say "running"
+    # are marked failed instead of showing a job that spins forever.
+    recon_queue.requeue_stale()
+    recon_queue.start()
     try:
         yield
     finally:
+        recon_queue.shutdown()
         training_manager.shutdown()
         quality_queue.shutdown()
 
@@ -65,6 +71,7 @@ app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(volunteer.router)
 app.include_router(workflow.router)
+app.include_router(reviews.router)
 app.include_router(media.router)
 
 

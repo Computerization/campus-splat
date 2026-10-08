@@ -46,8 +46,15 @@ FRONTEND_DIST = Path(
     os.environ.get("THREEDGS_FRONTEND_DIST") or (BASE_DIR / "frontend" / "dist")
 ).resolve()
 
-# Three permanent administrator identities; password-only login.
+# The three permanent administrator identities. These passwords are only the
+# seed for `admin_accounts` on the first start — after that the hashed passwords
+# in the database are the truth, and each admin changes their own from the
+# console (or with scripts/reset_admin_password.py if they forget it).
 ADMIN_PASSWORDS = {i: f"admin{i:03d}" for i in range(1, 4)}
+ADMIN_IDS = tuple(sorted(ADMIN_PASSWORDS))
+# Administrator 001 is the one who runs training and may operate on every
+# checkpoint; 002 and 003 only on the tasks they published.
+SUPER_ADMIN_ID = 1
 # CLI helpers default to administrator 001.
 ADMIN_PASSWORD = ADMIN_PASSWORDS[1]
 
@@ -142,6 +149,23 @@ COLMAP_BIN = os.environ.get("THREEDGS_COLMAP_BIN", "colmap")
 # COLMAP's vocabulary tree, needed by vocab_tree_matcher. Download it once and
 # point this at the .bin file (see the docs).
 VOCAB_TREE = os.environ.get("THREEDGS_VOCAB_TREE", "").strip()
+
+# ------------------------------------------------- 试解算 (trial reconstruction)
+#
+# The checkpoint review page can run COLMAP on a single checkpoint (minutes for a
+# room) to answer "can this be reconstructed, and how well" — see
+# services/recon.py. `auto` uses COLMAP when it is installed, `mock` never does,
+# `colmap` insists on it. Working data goes to data/recon/<checkpoint>/ and is
+# deleted after every trial; only the JSON report is kept.
+RECON_MODE = os.environ.get("THREEDGS_RECON_MODE", "auto").strip().lower()
+# Feature-extraction long side for the trial. Smaller than training's 2000: the
+# trial only has to judge geometry, and matching is what costs the time.
+RECON_MAX_IMAGE_SIZE = int(os.environ.get("THREEDGS_RECON_MAX_IMAGE_SIZE", "1600"))
+# Below this many usable photos COLMAP cannot say anything useful, so the trial
+# returns "cannot reconstruct" immediately instead of burning minutes.
+RECON_MIN_PHOTOS = int(os.environ.get("THREEDGS_RECON_MIN_PHOTOS", "12"))
+# A room-level solve takes minutes; this is the "something is wrong" cutoff.
+RECON_TIMEOUT_S = int(os.environ.get("THREEDGS_RECON_TIMEOUT_S", str(90 * 60)))
 
 TRAINING_DEFAULTS = {
     # 3DGS iterations per block

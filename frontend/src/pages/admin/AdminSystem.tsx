@@ -14,6 +14,7 @@ import {
   useTimeFormat,
 } from '../../components/common'
 import { useI18n } from '../../i18n'
+import AdminPasswordCard from './AdminPasswordCard'
 import type { Metrics } from '../../types'
 
 export default function AdminSystem() {
@@ -47,6 +48,10 @@ export default function AdminSystem() {
         <button type="button" className="btn btn-ghost" onClick={() => void reload()}>
           {t('common.refresh')}
         </button>
+      </div>
+
+      <div style={{ marginBottom: 18 }}>
+        <AdminPasswordCard />
       </div>
 
       <div className="grid cols-2" style={{ marginBottom: 18 }}>

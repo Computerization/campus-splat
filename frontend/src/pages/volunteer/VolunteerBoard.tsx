@@ -1,46 +1,208 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../auth'
-import { Card, ErrorBox, Spinner, useAsync, usePolling } from '../../components/common'
-import { workflow, assignmentLabel } from '../../workflow'
+import { api } from '../../api'
+import { Badge, Card, ErrorBox, Spinner, useAsync, usePolling } from '../../components/common'
+import { useI18n } from '../../i18n'
+import type { CheckpointCard } from '../../types'
+
+function Progress({ card }: { card: CheckpointCard }) {
+  const { t } = useI18n()
+  return (
+    <p className="small muted">
+      {t('volunteer.board.required', { count: card.checkpoint.shot_count })} ·{' '}
+      {t('volunteer.board.minePhotos', { count: card.my_usable_count })}
+    </p>
+  )
+}
 
 export default function VolunteerBoard() {
+  const { t } = useI18n()
   const { session, logout } = useAuth()
   const navigate = useNavigate()
-  const { data, error, loading, reload, silentRefresh } = useAsync(workflow.tasks, [])
-  usePolling(silentRefresh, 2000, true)
-  const [tab, setTab] = useState('all')
+  const { data, error, loading, reload, silentRefresh } = useAsync(api.board, [])
+  usePolling(silentRefresh, 3000, true)
   const [busy, setBusy] = useState<number | null>(null)
   const [actionError, setActionError] = useState<unknown>(null)
-  async function claim(id: number) {
-    setBusy(id); setActionError(null)
-    try { await workflow.claim(id); await reload(true); navigate(`/v/tasks/${id}`) }
-    catch (err) { setActionError(err) } finally { setBusy(null) }
+  const [message, setMessage] = useState('')
+
+  async function run(id: number, action: () => Promise<unknown>, note?: string) {
+    setBusy(id)
+    setActionError(null)
+    setMessage('')
+    try {
+      await action()
+      if (note) setMessage(note)
+      await reload(true)
+    } catch (err) {
+      setActionError(err)
+    } finally {
+      setBusy(null)
+    }
   }
+
+  async function claim(card: CheckpointCard) {
+    await run(card.checkpoint.id, () => api.claimCheckpoint(card.checkpoint.id))
+    if (!actionError) navigate(`/v/checkpoints/${card.checkpoint.id}`)
+  }
+
+  async function release(card: CheckpointCard) {
+    if (!window.confirm(t('volunteer.board.releaseConfirm'))) return
+    await run(card.checkpoint.id, () => api.releaseCheckpoint(card.checkpoint.id))
+  }
+
+  async function submit(card: CheckpointCard) {
+    if (!window.confirm(t('volunteer.board.submitConfirm'))) return
+    await run(card.checkpoint.id, () => api.submitCheckpoint(card.checkpoint.id), t('volunteer.board.submitted'))
+  }
+
   if (loading && !data) return <Spinner />
-  return <div className="workflow-page">
-    <header className="page-head"><div><h1>志愿者任务大厅</h1><div className="sub">{session?.nickname} · ID {session?.volunteer_id}</div></div>
-      <div className="row"><Link className="btn btn-ghost" to="/v/mine">账号设置</Link><button className="btn btn-ghost" onClick={async () => {await logout(); navigate('/join')}}>退出登录</button></div>
-    </header>
-    <Card><strong>任务槽：{data?.slots_used ?? 0} / 10</strong><p className="small muted">进行中和待审核任务占用任务槽，成功提交或主动放弃后释放。参与者每 2 秒更新。</p>
-      <div className="row">{[['all','全部任务'],['active','我的进行中'],['submitted','待审核'],['accepted','成功提交']].map(([key,label]) => <button key={key} className={`btn ${tab === key ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setTab(key)}>{label}</button>)}</div>
-    </Card>
-    {error || actionError ? <ErrorBox error={actionError || error} /> : null}
-    <div className="workflow-grid">{data?.items.filter(item => tab === 'all' || (tab === 'active' ? item.assignment?.status === 'in_progress' : item.assignment?.status === tab)).map(item => {
-      const state = item.assignment?.status
-      const claimed = state === 'in_progress' || state === 'submitted' || state === 'accepted'
-      return <Card key={item.task.id}>
-        <div className="row" style={{justifyContent:'space-between'}}><span className="tag-code">{item.task.access_code}</span><span className="badge">{claimed ? assignmentLabel[state!] : '未接取'}</span></div>
-        <h2 style={{marginTop: 14}}>{item.task.name}</h2><p>{item.task.description || '暂无任务描述'}</p>
-        <p className="small muted">管理员 {String(item.task.owner_admin_id).padStart(3,'0')} · {item.checkpoint_count} 个拍摄点 · {item.task.location_hint || '地点未填写'}</p>
-        <p className="small">正在进行：{item.active_volunteers.join('、') || '暂无志愿者'}</p>
-        {item.assignment?.review_note && <p className="workflow-note">管理员反馈：{item.assignment.review_note}</p>}
-        <div className="row"><Link className="btn btn-ghost" to={`/v/tasks/${item.task.id}`}>查看任务</Link>
-          {!claimed && item.task.status === 'active' && <button className="btn btn-primary" disabled={busy !== null || (data?.slots_used ?? 0) >= 10} onClick={() => void claim(item.task.id)}>接取</button>}
-          {state === 'in_progress' && <Link className="btn btn-primary" to={`/v/tasks/${item.task.id}`}>继续拍摄</Link>}
+
+  const held = data?.held ?? []
+  const available = data?.available ?? []
+  const reviewing = data?.reviewing ?? []
+  const approved = data?.approved ?? []
+
+  return (
+    <div className="workflow-page">
+      <header className="page-head">
+        <div>
+          <h1>{t('volunteer.board.title')}</h1>
+          <div className="sub">{session?.nickname} · ID {session?.volunteer_id}</div>
         </div>
+        <div className="row">
+          <Link className="btn btn-ghost" to="/v/mine">{t('volunteer.mine.title')}</Link>
+          <button className="btn btn-ghost" onClick={async () => { await logout(); navigate('/join') }}>
+            {t('common.logout')}
+          </button>
+        </div>
+      </header>
+
+      <Card>
+        <p className="small muted">{t('volunteer.board.sub')}</p>
+        {data?.busy ? <p className="workflow-note">{t('volunteer.board.busyHint')}</p> : null}
       </Card>
-    })}</div>
-    {data && !data.items.length && <Card><p>管理员还没有发布任务。</p></Card>}
-  </div>
+
+      {error || actionError ? <ErrorBox error={actionError || error} /> : null}
+      {message ? <p role="status">{message}</p> : null}
+
+      {held.length ? (
+        <>
+          <h2>{t('volunteer.board.held')}</h2>
+          <div className="workflow-grid">
+            {held.map((card) => (
+              <Card key={card.checkpoint.id}>
+                <div className="row" style={{ justifyContent: 'space-between' }}>
+                  <span className="small muted">{card.task_name}</span>
+                  {card.review_status === 'returned' ? (
+                    <Badge tone="bad">{t('volunteer.board.returned')}</Badge>
+                  ) : (
+                    <Badge tone="warn">{t('volunteer.board.continue')}</Badge>
+                  )}
+                </div>
+                <h2 style={{ marginTop: 10 }}>{card.checkpoint.name}</h2>
+                <Progress card={card} />
+                {card.review_note ? (
+                  <p className="workflow-note">{t('admin.review.note')}：{card.review_note}</p>
+                ) : null}
+                <div className="row">
+                  <Link className="btn btn-primary" to={`/v/checkpoints/${card.checkpoint.id}`}>
+                    {t('volunteer.board.continue')}
+                  </Link>
+                  <button
+                    className="btn btn-ghost"
+                    disabled={busy !== null}
+                    onClick={() => void submit(card)}
+                  >
+                    {t('volunteer.board.submit')}
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    disabled={busy !== null}
+                    onClick={() => void release(card)}
+                  >
+                    {t('volunteer.board.release')}
+                  </button>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </>
+      ) : null}
+
+      <h2>{t('volunteer.board.available')}</h2>
+      {available.length ? (
+        <div className="workflow-grid">
+          {available.map((card) => (
+            <Card key={card.checkpoint.id}>
+              <div className="row" style={{ justifyContent: 'space-between' }}>
+                <span className="small muted">{card.task_name}</span>
+                {card.claimed_by_someone_else ? (
+                  <Badge tone="neutral">{t('volunteer.board.byOther')}</Badge>
+                ) : (
+                  <Badge tone="ok">{card.checkpoint.name}</Badge>
+                )}
+              </div>
+              <h2 style={{ marginTop: 10 }}>{card.checkpoint.name}</h2>
+              <p className="small muted">
+                {t('volunteer.board.required', { count: card.checkpoint.shot_count })}
+              </p>
+              <div className="row">
+                <button
+                  className="btn btn-primary"
+                  disabled={busy !== null || card.claimed_by_someone_else || data?.busy}
+                  onClick={() => void claim(card)}
+                >
+                  {t('volunteer.board.claim')}
+                </button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <Card>
+          <p>{t('volunteer.board.empty')}</p>
+        </Card>
+      )}
+
+      {reviewing.length ? (
+        <>
+          <h2>{t('volunteer.board.reviewing')}</h2>
+          <div className="workflow-grid">
+            {reviewing.map((card) => (
+              <Card key={card.checkpoint.id}>
+                <div className="row" style={{ justifyContent: 'space-between' }}>
+                  <span className="small muted">{card.task_name}</span>
+                  <Badge tone="warn">{t('volunteer.board.submitted')}</Badge>
+                </div>
+                <h2 style={{ marginTop: 10 }}>{card.checkpoint.name}</h2>
+                <Progress card={card} />
+                {card.attempt > 1 ? (
+                  <p className="small muted">{t('volunteer.board.attempt', { count: card.attempt })}</p>
+                ) : null}
+              </Card>
+            ))}
+          </div>
+        </>
+      ) : null}
+
+      {approved.length ? (
+        <>
+          <h2>{t('volunteer.board.approved')}</h2>
+          <div className="workflow-grid">
+            {approved.map((card) => (
+              <Card key={card.checkpoint.id}>
+                <div className="row" style={{ justifyContent: 'space-between' }}>
+                  <span className="small muted">{card.task_name}</span>
+                  <Badge tone="ok">{t('admin.review.tab.approved')}</Badge>
+                </div>
+                <h2 style={{ marginTop: 10 }}>{card.checkpoint.name}</h2>
+                <Progress card={card} />
+              </Card>
+            ))}
+          </div>
+        </>
+      ) : null}
+    </div>
+  )
 }

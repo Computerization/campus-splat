@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import argparse
 import io
-import json
 import secrets
 import sys
 import time
@@ -42,8 +41,8 @@ DEMO_PREFIX = "演示 · "
 # Endpoints this script needs; their absence means the server runs old code
 REQUIRED_PATHS = (
     "/api/auth/volunteer/register",
-    "/api/volunteer/tasks/{task_id}/submit",
-    "/api/admin/submissions/{assignment_id}/review",
+    "/api/volunteer/checkpoints/{checkpoint_id}/submit",
+    "/api/admin/checkpoint-reviews/{checkpoint_id}/review",
     "/api/admin/training/preflight",
     "/api/admin/training/{run_id}/preview",
     "/api/admin/training/{run_id}/transforms",
@@ -183,27 +182,33 @@ def make_task(
         'username': f'演示志愿者{secrets.token_hex(4)}', 'password':secrets.token_urlsafe(12)})
     join.raise_for_status()
     volunteer_headers = {'Authorization': f'Bearer {join.json()["token"]}'}
-    claim = client.post(f'/api/volunteer/tasks/{task["id"]}/claim', headers=volunteer_headers)
-    claim.raise_for_status()
-    files = []
-    manifest = []
+
+    # 一次一个点位：接取 → 上传 → 交卷，再接下一个（和真人在手机上做的一样）
+    uploaded = 0
     for checkpoint in checkpoints:
+        claim = client.post(f'/api/volunteer/checkpoints/{checkpoint["id"]}/claim',
+                            headers=volunteer_headers)
+        claim.raise_for_status()
+        files = []
         for _ in range(photos_each):
             seed += 13
             files.append(('files', (f'demo{seed}.jpg', make_photo(seed), 'image/jpeg')))
-            manifest.append({'checkpoint_id': checkpoint['id']})
-    response = client.post(f'/api/volunteer/tasks/{task["id"]}/submit', headers=volunteer_headers,
-        data={'manifest': json.dumps(manifest)}, files=files)
-    response.raise_for_status()
+            uploaded += 1
+        response = client.post(f'/api/volunteer/checkpoints/{checkpoint["id"]}/photos',
+                               files=files, headers=volunteer_headers)
+        response.raise_for_status()
+        handed = client.post(f'/api/volunteer/checkpoints/{checkpoint["id"]}/submit',
+                             headers=volunteer_headers)
+        handed.raise_for_status()
+
     # The quality check runs in the background, and a reconstruction only uses
-    # judged photos — wait for it before accepting the submission
+    # judged photos — wait for it before judging the checkpoints.
     wait_for_quality(client, headers)
-    assignment_id = response.json()['assignment']['id']
-    accepted = client.post(f'/api/admin/submissions/{assignment_id}/review', headers=headers,
-        json={'decision': 'accept'})
-    accepted.raise_for_status()
+    for checkpoint in checkpoints:
+        reviewed = client.post(f'/api/admin/checkpoint-reviews/{checkpoint["id"]}/review',
+                               headers=headers, json={'decision': 'approve', 'note': ''})
+        reviewed.raise_for_status()
     client.delete('/api/auth/volunteer/account', headers=volunteer_headers).raise_for_status()
-    uploaded = len(files)
     print(f"  {task['name']}：{len(checkpoints)} 个点位，上传 {uploaded} 张（全部可用）")
     return task
 

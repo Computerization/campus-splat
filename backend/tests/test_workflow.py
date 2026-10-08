@@ -126,8 +126,13 @@ def test_ownership_task_codes_and_participants(client,admin_headers):
     t,cp = task(client,admin_headers)
     assert re.fullmatch('[A-Z0-9]{5}',t['access_code'])
     assert client.patch(f"/api/admin/tasks/{t['id']}",headers=admin_headers,json={'access_code':'ABCDE'}).status_code == 400
-    for path in [f"/api/admin/tasks/{t['id']}",f"/api/admin/tasks/{t['id']}/export.csv",f"/api/admin/training/preflight?task_id={t['id']}"]:
-        assert client.get(path,headers=other_admin).status_code == 403
+    # Reading is shared: every administrator can look at any task, checkpoint and
+    # photo (the checkpoint review page needs exactly that). Only *changes* are
+    # limited to the owner.
+    for path in [f"/api/admin/tasks/{t['id']}",f"/api/admin/tasks/{t['id']}/export.csv"]:
+        assert client.get(path,headers=other_admin).status_code == 200
+    # Training stays with administrator 001.
+    assert client.get(f"/api/admin/training/preflight?task_id={t['id']}",headers=other_admin).status_code == 403
     assert client.patch(f"/api/admin/checkpoints/{cp['id']}",headers=other_admin,json={'name':'入侵'}).status_code == 403
     assert client.delete(f"/api/admin/tasks/{t['id']}",headers=other_admin).status_code == 403
     owned, _ = task(client,other_admin,'第二管理员任务')
@@ -176,7 +181,9 @@ def test_submission_return_resubmit_accept_and_media_isolation(client,admin_head
     assert submit(client,v,t['id'],cp['id'],913).status_code == 409
     assert client.get(f'/api/media/file/{pid}',headers=observer).status_code == 403
     other_admin = headers(client.post('/api/auth/admin/login',json={'password':'admin003'}).json())
-    assert client.get(f'/api/media/file/{pid}',headers=other_admin).status_code == 403
+    # Photos are shared between administrators — the checkpoint review page shows
+    # every task's photos. Judging somebody else's submission stays forbidden.
+    assert client.get(f'/api/media/file/{pid}',headers=other_admin).status_code == 200
     assert client.post(f'/api/admin/submissions/{aid}/review',headers=other_admin,json={'decision':'accept'}).status_code == 403
     r = client.post(f'/api/admin/submissions/{aid}/review',headers=admin_headers,json={'decision':'return','note':'补充角度'})
     assert r.json()['status'] == 'in_progress'

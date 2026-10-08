@@ -692,21 +692,33 @@ function PhotoCardSmall({ photo }: { photo: Photo }) {
   )
 }
 
+/** "8x6x3.5" / "8×6×3.5" / "8*6*3.5" → length, width, height (null when absent). */
+function parseSize(text?: string): [number | null, number | null, number | null] {
+  const parts = (text ?? '').split(/[x×*]/i)
+  if (parts.length !== 3) return [null, null, null]
+  return [parsePositive(parts[0]), parsePositive(parts[1]), parsePositive(parts[2])]
+}
+
 function parseBulk(text: string) {
   return text
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
-      const [name, building, floor, room, shots] = line.split('|').map((part) => part.trim())
-      const count = Number(shots)
-      // The old format had separate 楼栋/楼层/房间 columns; they are folded into
-      // the single "房间/走廊/…" field now, so pasted lists keep working.
-      const place = [building, floor, room].filter(Boolean).join(' ')
+      // 点位名|位置|长x宽x高  (an optional 4th column overrides the shot count)
+      const [name, place, size, shots] = line.split('|').map((part) => part.trim())
+      const [length, width, height] = parseSize(size)
+      const typed = Number(shots)
       return {
         name: name ?? '',
         room: place || undefined,
-        shot_count: Number.isFinite(count) && count > 0 ? Math.min(64, Math.round(count)) : 4,
+        length_m: length ?? undefined,
+        width_m: width ?? undefined,
+        room_height_m: height ?? undefined,
+        // No shot count column any more — the server derives it from the size
+        // (services/shots.py). Send one only when the admin typed it.
+        shot_count:
+          Number.isFinite(typed) && typed > 0 ? Math.min(64, Math.round(typed)) : undefined,
       }
     })
     .filter((item) => item.name.length > 0)

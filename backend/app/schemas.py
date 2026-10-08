@@ -26,6 +26,9 @@ class ORMModel(BaseModel):
 
 
 class AdminLoginIn(BaseModel):
+    # Which of the three fixed administrators is logging in (the login page asks
+    # first). Optional so password-only clients keep working.
+    admin_id: int | None = Field(default=None, ge=1, le=3)
     password: str = Field(min_length=1)
 
 
@@ -115,7 +118,9 @@ class CheckpointCreateIn(BaseModel):
     indoor: bool = True
     instructions: str | None = None
     find_hint: str | None = None
-    shot_count: int = Field(default=4, ge=1, le=64)
+    shot_count: int | None = Field(default=None, ge=1, le=64)
+    # Left empty, the server estimates it from the room size (services/shots.py).
+    # That is what the "点位名|位置|长x宽x高" import format relies on.
     angles: list[AngleSpec] | None = None
 
 

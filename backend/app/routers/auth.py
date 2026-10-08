@@ -14,9 +14,10 @@ from sqlalchemy.orm import Session as OrmSession
 
 from .. import config
 from ..database import get_db
-from ..models import AuthSession, Task, VolunteerAccount, TaskAssignment, utcnow
+from ..models import AdminAccount, AuthSession, Task, VolunteerAccount, TaskAssignment, utcnow
 from ..schemas import AdminLoginIn, SessionOut, VolunteerJoinIn
-from ..security import create_session, current_session, require_volunteer
+from ..security import create_session, current_session, require_admin, require_volunteer
+from ..services.passwords import hash_password, verify_password
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -80,6 +81,22 @@ def _to_out(session: AuthSession, task_name: str | None = None) -> SessionOut:
     )
 
 
+def _verify_admin(db: OrmSession, admin_id: int | None, password: str) -> int | None:
+    """Which administrator is this login for?
+
+    The login page sends the number the admin picked; without it (old clients,
+    the test suite) any account whose password matches wins. Every candidate is
+    checked either way, so the time taken does not leak which number exists.
+    """
+    stored = {row.id: row.password_hash for row in db.scalars(select(AdminAccount))}
+    candidates = [admin_id] if admin_id else list(config.ADMIN_IDS)
+    matched: int | None = None
+    for candidate in candidates:
+        if verify_password(password, stored.get(candidate)):
+            matched = candidate
+    return matched
+
+
 @router.post("/admin/login", response_model=SessionOut)
 def admin_login(
     payload: AdminLoginIn,
@@ -88,13 +105,40 @@ def admin_login(
 ) -> SessionOut:
     key = _client_key(request)
     _reject_if_locked(key)
-    admin_id = next((i for i, password in config.ADMIN_PASSWORDS.items() if hmac.compare_digest(payload.password.encode(), password.encode())), None)
+    admin_id = _verify_admin(db, payload.admin_id, payload.password)
     if admin_id is None:
         _record_failure(key)
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "管理密码不正确")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "管理员编号或密码不正确")
     _clear_failures(key)
     session = create_session(db, role="admin", nickname=f"管理员 {admin_id:03d}", admin_id=admin_id)
     return _to_out(session)
+
+
+class AdminPasswordChange(BaseModel):
+    current_password: str = Field(min_length=1)
+    password: str = Field(min_length=8, max_length=128)
+
+
+@router.patch('/admin/password')
+def change_admin_password(
+    payload: AdminPasswordChange,
+    session: AuthSession = Depends(require_admin),
+    db: OrmSession = Depends(get_db),
+):
+    """An administrator changes their own password (System 页).
+
+    Forgot it? Reset it on the server with scripts/reset_admin_password.py — no
+    administrator may change another one's password.
+    """
+    account = db.get(AdminAccount, session.admin_id)
+    if account is None or not verify_password(payload.current_password, account.password_hash):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, '当前密码不正确')
+    if payload.password == payload.current_password:
+        raise HTTPException(400, '新密码不能与当前密码相同')
+    account.password_hash = hash_password(payload.password)
+    account.updated_at = utcnow()
+    db.commit()
+    return {'admin_id': session.admin_id, 'ok': True}
 
 
 @router.post("/volunteer/join", response_model=SessionOut)

@@ -11,10 +11,10 @@ import AdminSystem from './pages/admin/AdminSystem'
 import AdminTaskDetail from './pages/admin/AdminTaskDetail'
 import AdminTasks from './pages/admin/AdminTasks'
 import AdminTraining from './pages/admin/AdminTraining'
-import VolunteerBoard from './pages/volunteer/VolunteerBoard'
-import VolunteerTask from './pages/volunteer/VolunteerTask'
+import AdminCheckpointReviews from './pages/admin/AdminCheckpointReviews'
 import AdminVolunteers from './pages/admin/AdminVolunteers'
-import AdminSubmissions from './pages/admin/AdminSubmissions'
+import VolunteerBoard from './pages/volunteer/VolunteerBoard'
+import VolunteerCheckpoint from './pages/volunteer/VolunteerCheckpoint'
 import VolunteerJoin from './pages/volunteer/VolunteerJoin'
 import VolunteerMine from './pages/volunteer/VolunteerMine'
 
@@ -34,8 +34,8 @@ function RequireVolunteer({ children }: { children: JSX.Element }) {
   const { ready, isVolunteer } = useAuth()
   const location = useLocation()
   if (!ready) return <Spinner />
-  // Volunteers are accounts of their own now (they claim tasks inside the app),
-  // so this only needs to know that the visitor is one.
+  // Volunteers are accounts of their own now (they claim checkpoints inside the
+  // app), so this only needs to know that the visitor is one.
   if (!isVolunteer) {
     return <Navigate to="/join" state={{ from: location.pathname }} replace />
   }
@@ -54,7 +54,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Landing />} />
 
-      {/* Volunteer UI (phone) */}
+      {/* Volunteer UI (phone) — work is per checkpoint, one at a time */}
       <Route path="/join" element={<VolunteerJoin />} />
       <Route
         path="/v"
@@ -65,10 +65,10 @@ export default function App() {
         }
       />
       <Route
-        path="/v/tasks/:id"
+        path="/v/checkpoints/:id"
         element={
           <RequireVolunteer>
-            <VolunteerTask />
+            <VolunteerCheckpoint />
           </RequireVolunteer>
         }
       />
@@ -80,6 +80,8 @@ export default function App() {
           </RequireVolunteer>
         }
       />
+      {/* The task page is gone: the checkpoint board covers it */}
+      <Route path="/v/tasks/:id" element={<Navigate to="/v" replace />} />
 
       {/* Admin console (desktop) */}
       <Route path="/admin/login" element={<AdminLogin />} />
@@ -95,7 +97,9 @@ export default function App() {
         <Route path="tasks" element={<AdminTasks />} />
         <Route path="tasks/:id" element={<AdminTaskDetail />} />
         <Route path="volunteers" element={<AdminVolunteers />} />
-        <Route path="submissions" element={<AdminSubmissions />} />
+        <Route path="checkpoint-reviews" element={<AdminCheckpointReviews />} />
+        {/* "任务成果审核" became the per-checkpoint review */}
+        <Route path="submissions" element={<Navigate to="/admin/checkpoint-reviews" replace />} />
         <Route path="photos" element={<AdminPhotos />} />
         <Route path="training" element={<RequireTrainingAdmin><AdminTraining /></RequireTrainingAdmin>} />
         <Route

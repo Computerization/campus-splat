@@ -153,43 +153,64 @@ records remain in the database. Original media is removed when requested.
 1. Register with a real name and a password. Active usernames must be unique;
    passwords may repeat. Registration assigns a permanent ID, starting at `00000`.
 2. Log in with username/password. Volunteers cannot edit their name or ID, but can
-   change their password in Settings.
-3. Browse published tasks and claim up to ten at once. In-progress and submitted
-   tasks count towards this limit; the backend enforces it under concurrent requests.
-4. Follow every checkpoint's shooting instructions. Selected photos are drafts in
-   IndexedDB on the current browser/device; they survive a reload but do not sync
-   between devices. The task page shows progress and allows removing/replacing photos.
-5. After every checkpoint meets its required photo count, submit all photos together.
-   The batch is validated on submission (byte-identical duplicates, unreadable files)
-   and rolls back as a whole when something is wrong. The heuristic quality checks —
-   blur, exposure, near-duplicates — then run in the background, so the admin sees the
-   verdicts when reviewing. Pending submissions are locked and cannot be abandoned.
-6. A returned submission goes back to in-progress, retaining the photos and review
-   feedback. The volunteer can change photos, resubmit, or abandon.
-7. Accepted submissions appear under Successful submissions and release their slot.
-   Abandoning clears the attempt and releases its slot; claiming again starts fresh.
+   change their password under Settings (`/v/mine`).
+3. The board lists the checkpoints that are free to take. **One checkpoint at a
+   time**: take one, shoot it, upload it, hand it in, then take the next. While a
+   checkpoint is taken and not yet handed in, the backend refuses another one.
+4. Follow the checkpoint's shooting instructions — a per-angle script, where to find
+   the spot, and an optional reference image. Selected photos are drafts in IndexedDB
+   on the current browser/device; they survive a reload but do not sync between devices.
+5. Upload that checkpoint's photos. The upload itself is validated on the spot
+   (unreadable files, byte-identical duplicates) so a mistake is caught while the
+   volunteer is still standing there, and the heuristic quality check — blur, exposure,
+   near-duplicates — runs in the background while the phone polls for the verdicts.
+6. Hand the checkpoint in (`提交审核`). It does **not** wait for the rest of the task:
+   the volunteer hands in one checkpoint, waits for nothing, and starts the next.
+7. A checkpoint the admin sends back returns to "mine to shoot" with the review note
+   attached — only that checkpoint has to be reshot, the approved ones stay approved.
+8. Approved checkpoints move to the approved list on the board.
 
-Account archival permanently preserves the ID, name, password and historical
-records, revokes sessions and releases the username. Registering the same name
-later allocates a new ID; old IDs never get reused. The display pads IDs to at least
-five digits, allowing registration beyond 100,000 accounts. Unfinished assignments
-are closed on archival; already-submitted data remains available for administrator
-review. Volunteers and administrators see participant names update every two seconds.
+Closing an account (`/v/mine`) permanently preserves the ID, name, password and
+historical records, revokes sessions and releases the username. Registering the same
+name later allocates a new ID; old IDs never get reused. The display pads IDs to at
+least five digits. Work already handed in stays with the administrators for review.
 
 ### Administrators — open `/admin`
 
 - **Tasks & checkpoints:** create, edit descriptions, configure required photos and
   reference images, or delete your own tasks. Automatically generated task codes
   cannot be changed. Your tasks appear above the navigation's task-management entry.
+  Batch import takes **one line per checkpoint: `点位名|位置|长x宽x高`** (for example
+  `3F 实验室 302|302|8x6x3.5`) — the old 楼栋/楼层/房间 columns are gone. The required
+  photo count is derived from the size (`2*(l*w + l*h + w*h) / 5 m²`, see
+  `backend/app/services/shots.py`) unless an optional 4th column overrides it.
 - **Volunteer accounts:** view every active volunteer's name, permanent ID and
   password; edit names/passwords or archive accounts. Changing a password revokes
   the volunteer's existing sessions.
-- **Submissions:** inspect each complete submission, download originals, add feedback,
-  then accept or return the entire submission. Decisions are serialized and a
-  submission cannot be reviewed twice.
+- **Checkpoint photo review (点位照片最终审核):** every handed-in checkpoint shows up
+  here. **All** administrators see every checkpoint of every task, photos and quality
+  verdicts included; administrator **001 may judge any checkpoint**, while 002/003 only
+  the checkpoints of tasks they published. A verdict is per checkpoint — *approve*, or
+  *send back* with a note, in which case only that checkpoint has to be reshot and the
+  approved ones stay approved. Decisions are serialized and cannot be repeated.
+- **Trial reconstruction (试解算):** the button on that page runs COLMAP once on one
+  checkpoint's photos and answers the two questions the review needs: *can this be
+  reconstructed at all*, and *how good is it, 1-100*. It takes minutes for a room, runs
+  one at a time, and keeps only a JSON report — `data/recon/<checkpoint>/` is deleted
+  afterwards and the model is never reused by training (COLMAP is non-deterministic, so
+  the report is evidence for a human, not a promise). The report lists the registration
+  ratio, how many connected blocks the photos formed, the reprojection error, the worst
+  photos, and a rule-based "what to shoot next" list for the volunteer. Mock mode
+  (`THREEDGS_RECON_MODE=mock`) fakes the report where COLMAP is not installed.
+- **Administrator passwords:** each administrator picks their number at login
+  (001/002/003) and changes **their own** password under System. Forgotten ones are
+  reset on the server with `uv run python backend/scripts/reset_admin_password.py 002`
+  (the server must be stopped first). Hashes live in `admin_accounts`;
+  `config.ADMIN_PASSWORDS` only seeds the very first start.
 - **Photo review, training and 3D preview:** the original quality override, CSV export,
   reconstruction pipeline and placement editor remain available for your own tasks.
-- **System:** monitor server hardware and resource usage. Global data deletion is disabled.
+- **System:** monitor server hardware and resource usage, and change your own password.
+  Global data deletion is disabled.
 
 Legacy password-only administrator sessions and task-code volunteer sessions are
 invalidated once during migration. New accounts persist across server restarts.
