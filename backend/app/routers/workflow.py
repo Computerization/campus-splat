@@ -1,4 +1,15 @@
-"""Persistent accounts, task claims and atomic, whole-task submissions."""
+"""Persistent accounts, task claims and atomic, whole-task submissions.
+
+**Superseded by the per-checkpoint flow.** A volunteer now takes one checkpoint at
+a time, uploads it, hands it in and moves on (routers/volunteer.py), and an admin
+judges that single checkpoint (routers/reviews.py) — with a trial reconstruction
+to go with it (services/recon.py). Nothing in the UI calls these task-level
+endpoints any more: they are kept because existing rows and the tests written
+before the checkpoint flow still refer to them.
+
+If that ever stops being true, this module, `/api/admin/submissions`, the
+`TaskAssignment` model and those task-level tests can all go together.
+"""
 from __future__ import annotations
 
 import json
